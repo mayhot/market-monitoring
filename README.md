@@ -7,14 +7,16 @@
 - 自定义监控标的、展示名称和分组。
 - 分组支持折叠和展开。
 - 在行情面板中添加标的，并通过分组标题的编辑按钮删除、上移、下移标的。
-- 自定义上涨、下跌、平盘颜色。
+- 涨跌颜色模式可配置，默认无颜色。
 - 自定义价格小数位。
+- 标的表格列可配置，支持名称/代码、价格、涨跌幅、涨跌额、成本、持仓、净收益额。
+- 成本和持仓可在表格中输入并修改，净收益额自动计算。
+- 表格支持点击列名排序，升序、降序、恢复默认三态切换。
 - 分组统计上涨、下跌、平盘数量和平均涨跌幅。
 - 支持按配置顺序、涨跌幅、价格、名称、代码排序。
 - 支持价格和涨跌幅预警。
 - 底部右下角提供指数下拉切换。
 - Activity Bar 独立行情视图。
-- 状态栏展示紧凑行情摘要。
 - 支持手动刷新、启动、暂停。
 
 ## 配置示例
@@ -37,12 +39,15 @@
   ],
   "marketMonitoring.sortBy": "changePercent",
   "marketMonitoring.sortDirection": "desc",
+  "marketMonitoring.quoteColumns": [
+    "identity",
+    "price",
+    "changePercent"
+  ],
   "marketMonitoring.priceDecimalPlaces": 2,
+  "marketMonitoring.colorMode": "none",
   "marketMonitoring.refreshIntervalSeconds": 5,
-  "marketMonitoring.onlyDuringTradingTime": true,
-  "marketMonitoring.colors.up": "#e51400",
-  "marketMonitoring.colors.down": "#16a34a",
-  "marketMonitoring.colors.flat": "#8b949e"
+  "marketMonitoring.onlyDuringTradingTime": true
 }
 ```
 
@@ -110,9 +115,45 @@
 
 `marketMonitoring.sortDirection` 可选 `desc` 或 `asc`。
 
+表格列名也支持点击排序：第一次点击升序，第二次点击降序，第三次恢复默认顺序。当前排序方向会显示在列名旁边。
+
 ## 价格小数位
 
 `marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数，默认 `2`，支持 `0-6`。
+
+## 涨跌颜色
+
+`marketMonitoring.colorMode` 控制涨跌指标颜色，默认 `none`。
+
+可选值：
+
+- `none`：无颜色，涨跌指标使用普通文字颜色。
+- `redUpGreenDown`：上涨红、下跌绿。
+- `greenUpRedDown`：上涨绿、下跌红。
+
+## 表格列配置
+
+`marketMonitoring.quoteColumns` 控制标的表格展示哪些列，默认：
+
+```json
+{
+  "marketMonitoring.quoteColumns": [
+    "identity",
+    "price",
+    "changePercent"
+  ]
+}
+```
+
+可选列：
+
+- `identity`：名称/代码。
+- `price`：价格。
+- `changePercent`：涨跌幅。
+- `change`：涨跌额。
+- `cost`：成本，可在表格中编辑。
+- `holding`：持仓，可在表格中编辑。
+- `netProfit`：净收益额，按 `(当前价 - 成本) * 持仓` 自动计算。
 
 ## 指数切换
 

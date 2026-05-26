@@ -124,6 +124,14 @@
               "group": {
                 "type": "string",
                 "description": "Custom group name."
+              },
+              "cost": {
+                "type": "number",
+                "description": "Optional cost basis used to calculate net profit."
+              },
+              "holding": {
+                "type": "number",
+                "description": "Optional holding quantity used to calculate net profit."
               }
             },
             "additionalProperties": false
@@ -143,7 +151,7 @@
         },
         "marketMonitoring.showStatusBar": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Show a compact market summary in the VS Code status bar."
         },
         "marketMonitoring.priceDecimalPlaces": {
@@ -152,6 +160,52 @@
           "minimum": 0,
           "maximum": 6,
           "description": "Decimal places used for quote price display."
+        },
+        "marketMonitoring.colorMode": {
+          "type": "string",
+          "default": "none",
+          "enum": [
+            "none",
+            "redUpGreenDown",
+            "greenUpRedDown"
+          ],
+          "enumDescriptions": [
+            "Do not color price change indicators.",
+            "Use red for rising values and green for falling values.",
+            "Use green for rising values and red for falling values."
+          ],
+          "description": "Color mode for rising and falling indicators."
+        },
+        "marketMonitoring.quoteColumns": {
+          "type": "array",
+          "default": [
+            "identity",
+            "price",
+            "changePercent"
+          ],
+          "markdownDescription": "Columns displayed in the quote table.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "identity",
+              "price",
+              "changePercent",
+              "change",
+              "cost",
+              "holding",
+              "netProfit"
+            ],
+            "enumDescriptions": [
+              "Name and code.",
+              "Latest price.",
+              "Change percentage.",
+              "Price change.",
+              "Editable cost basis.",
+              "Editable holding quantity.",
+              "Calculated net profit."
+            ]
+          },
+          "uniqueItems": true
         },
         "marketMonitoring.sortBy": {
           "type": "string",
@@ -233,21 +287,6 @@
             },
             "additionalProperties": false
           }
-        },
-        "marketMonitoring.colors.up": {
-          "type": "string",
-          "default": "#e51400",
-          "description": "Color for rising prices."
-        },
-        "marketMonitoring.colors.down": {
-          "type": "string",
-          "default": "#16a34a",
-          "description": "Color for falling prices."
-        },
-        "marketMonitoring.colors.flat": {
-          "type": "string",
-          "default": "#8b949e",
-          "description": "Color for unchanged prices."
         },
         "marketMonitoring.requestTimeoutMs": {
           "type": "number",

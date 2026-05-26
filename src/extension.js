@@ -6,11 +6,11 @@ const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
 const DEFAULT_GROUP = '未分组';
 const INDEX_SYMBOLS = [
+  { code: 'sh000985', name: '中证全指', group: '指数' },
   { code: 'sh000001', name: '上证指数', group: '指数' },
   { code: 'sz399001', name: '深证成指', group: '指数' },
   { code: 'sz399006', name: '创业板指', group: '指数' },
   { code: 'sh000688', name: '科创50', group: '指数' },
-  { code: 'sh000985', name: '中证全指', group: '指数' },
   { code: 'bj899050', name: '北证50', group: '指数' }
 ];
 const DEFAULT_INDEX_CODE = 'sh000001';
@@ -55,6 +55,10 @@ function activate(context) {
       monitor.removeSymbol(message.index);
     } else if (message.command === 'moveSymbol') {
       monitor.moveSymbol(message.index, message.direction);
+    } else if (message.command === 'refreshIndex') {
+      monitor.refresh(true);
+    } else if (message.command === 'updateSymbolField') {
+      monitor.updateSymbolField(message.index, message.field, message.value);
     }
   });
 
@@ -158,6 +162,27 @@ class MarketMonitor {
     await updateConfiguredSymbols(nextSymbols);
   }
 
+  async updateSymbolField(index, field, value) {
+    const parsedIndex = Number(index);
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length || !['cost', 'holding'].includes(field)) {
+      return;
+    }
+
+    const parsedValue = optionalNumber(value);
+    const nextSymbols = this.config.symbols.map((symbol, currentIndex) => {
+      if (currentIndex !== parsedIndex) {
+        return symbol;
+      }
+
+      return {
+        ...symbol,
+        [field]: parsedValue
+      };
+    });
+
+    await updateConfiguredSymbols(nextSymbols);
+  }
+
   async refresh(force) {
     if (!this.running || this.isRefreshing) {
       return;
@@ -243,7 +268,11 @@ class MarketMonitor {
     const summary = head.map((quote) => `${quote.name} ${formatPercent(quote.changePercent)}`).join(' ');
     this.statusBarItem.text = alertCount > 0 ? `$(warning) ${alertCount} ${summary}` : `$(graph-line) ${summary}`;
     this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
-    this.statusBarItem.color = alertCount > 0 ? snapshot.colors.up : getTrendColor(average, snapshot.colors);
+    this.statusBarItem.color = snapshot.colors.mode === 'none'
+      ? undefined
+      : alertCount > 0
+        ? snapshot.colors.up
+        : getTrendColor(average, snapshot.colors);
     this.statusBarItem.show();
   }
 
@@ -278,6 +307,7 @@ class MarketMonitor {
       sortBy: this.config.sortBy,
       sortDirection: this.config.sortDirection,
       priceDecimalPlaces: this.config.priceDecimalPlaces,
+      quoteColumns: this.config.quoteColumns,
       symbolCount: this.config.symbols.length,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
@@ -297,11 +327,12 @@ class QuotesViewProvider {
       phaseName: '未启动',
       updatedAt: '',
       error: '',
-      colors: { up: '#e51400', down: '#16a34a', flat: '#8b949e' },
+      colors: getColorPalette('none'),
       alerts: [],
       sortBy: 'configured',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
+      quoteColumns: ['identity', 'price', 'changePercent'],
       symbolCount: 0,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: INDEX_SYMBOLS.map((symbol) => ({
@@ -370,10 +401,18 @@ class QuotesViewProvider {
       box-sizing: border-box;
     }
 
+    html {
+      width: 100%;
+    }
+
     body {
       margin: 0;
       padding: 12px;
+      width: 100%;
+      max-width: 100%;
       min-height: 100vh;
+      max-height: 100vh;
+      overflow-y: auto;
       color: var(--vscode-foreground);
       background: var(--surface);
       font-family: var(--vscode-font-family);
@@ -430,6 +469,8 @@ class QuotesViewProvider {
       display: flex;
       gap: 5px;
       align-items: center;
+      min-width: 0;
+      max-width: 100%;
       margin-bottom: 12px;
     }
 
@@ -437,7 +478,6 @@ class QuotesViewProvider {
       flex: 1;
       min-width: 0;
       color: var(--muted);
-      font-size: 12px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -447,6 +487,8 @@ class QuotesViewProvider {
       display: grid;
       grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
       gap: 6px;
+      min-width: 0;
+      max-width: 100%;
       margin-bottom: 10px;
       padding: 8px;
       border: 1px solid var(--border);
@@ -519,7 +561,6 @@ class QuotesViewProvider {
     .hint {
       margin: 0 0 8px;
       color: var(--muted);
-      font-size: 11px;
       line-height: 1.4;
     }
 
@@ -528,7 +569,14 @@ class QuotesViewProvider {
       border: 1px solid var(--border);
       border-radius: 7px;
       overflow: hidden;
+      min-width: 0;
+      max-width: 100%;
       background: var(--surface);
+    }
+
+    .quote-table {
+      overflow-x: auto;
+      overflow-y: hidden;
     }
 
     .group.editing {
@@ -538,6 +586,8 @@ class QuotesViewProvider {
     #app {
       flex: 1;
       min-height: 0;
+      min-width: 0;
+      max-width: 100%;
       padding-bottom: 10px;
     }
 
@@ -546,16 +596,17 @@ class QuotesViewProvider {
       justify-content: space-between;
       align-items: center;
       gap: 8px;
+      min-width: 0;
       padding: 8px 8px;
       color: var(--vscode-sideBarTitle-foreground);
       background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
-      font-weight: 400;
     }
 
     .group-title-actions {
       display: flex;
       gap: 6px;
       align-items: center;
+      flex: 0 1 auto;
       min-width: 0;
     }
 
@@ -563,6 +614,7 @@ class QuotesViewProvider {
       display: flex;
       gap: 6px;
       align-items: center;
+      flex: 1;
       min-width: 0;
     }
 
@@ -577,23 +629,23 @@ class QuotesViewProvider {
       display: flex;
       gap: 6px;
       align-items: center;
+      min-width: 0;
+      overflow: hidden;
       color: var(--muted);
-      font-size: 11px;
-      font-weight: 400;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
     .count {
       color: var(--muted);
-      font-weight: 400;
     }
 
     .quote {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 6px 10px;
-      padding: 9px 8px;
+      gap: 6px;
+      align-items: center;
+      min-width: max-content;
+      padding: 7px 8px;
       border-top: 1px solid var(--border);
       background: transparent;
       transition: background 120ms ease;
@@ -603,8 +655,93 @@ class QuotesViewProvider {
       background: var(--surface-hover);
     }
 
-    .quote.editing {
-      grid-template-columns: minmax(0, 1fr) auto auto;
+    .quote.cols-1 {
+      grid-template-columns: minmax(88px, 1fr);
+    }
+
+    .quote.cols-2 {
+      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content);
+    }
+
+    .quote.cols-3 {
+      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) minmax(70px, max-content);
+    }
+
+    .quote.cols-4 {
+      grid-template-columns: minmax(88px, 1fr) repeat(3, minmax(70px, max-content));
+    }
+
+    .quote.cols-5 {
+      grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(70px, max-content));
+    }
+
+    .quote.cols-6 {
+      grid-template-columns: minmax(88px, 1fr) repeat(5, minmax(70px, max-content));
+    }
+
+    .quote.cols-7 {
+      grid-template-columns: minmax(88px, 1fr) repeat(6, minmax(70px, max-content));
+    }
+
+    .quote.editing.cols-1 {
+      grid-template-columns: minmax(88px, 1fr) auto;
+    }
+
+    .quote.editing.cols-2 {
+      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) auto;
+    }
+
+    .quote.editing.cols-3 {
+      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) minmax(70px, max-content) auto;
+    }
+
+    .quote.editing.cols-4 {
+      grid-template-columns: minmax(88px, 1fr) repeat(3, minmax(70px, max-content)) auto;
+    }
+
+    .quote.editing.cols-5 {
+      grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(70px, max-content)) auto;
+    }
+
+    .quote.editing.cols-6 {
+      grid-template-columns: minmax(88px, 1fr) repeat(5, minmax(70px, max-content)) auto;
+    }
+
+    .quote.editing.cols-7 {
+      grid-template-columns: minmax(88px, 1fr) repeat(6, minmax(70px, max-content)) auto;
+    }
+
+    .quote-header {
+      color: var(--muted);
+      background: color-mix(in srgb, var(--surface-soft) 42%, transparent);
+    }
+
+    .sort-button {
+      width: 100%;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      text-align: inherit;
+      justify-content: inherit;
+    }
+
+    .sort-button:hover {
+      background: transparent;
+      color: var(--vscode-foreground);
+    }
+
+    .quote-cell {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .quote-cell.numeric {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
 
     .quote.alert {
@@ -621,25 +758,23 @@ class QuotesViewProvider {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-weight: 400;
     }
 
     .alert-badge {
       display: inline-block;
       margin-left: 6px;
       color: var(--vscode-notificationsWarningIcon-foreground, var(--up));
-      font-size: 11px;
-      font-weight: 700;
     }
 
     .code,
-    .time,
     .meta {
       color: var(--muted);
-      font-size: 11px;
     }
 
     .numbers {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
       text-align: right;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
@@ -661,6 +796,18 @@ class QuotesViewProvider {
       display: flex;
       gap: 3px;
       align-items: center;
+      min-width: 0;
+      justify-content: flex-end;
+    }
+
+    .cell-input {
+      width: 100%;
+      min-width: 56px;
+      max-width: 86px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      padding: 3px 5px;
+      min-height: 24px;
     }
 
     .index-dock {
@@ -668,6 +815,8 @@ class QuotesViewProvider {
       bottom: 0;
       display: flex;
       justify-content: flex-end;
+      min-width: 0;
+      max-width: 100%;
       padding-top: 8px;
       background: linear-gradient(to bottom, transparent, var(--surface) 30%);
       border-top: 1px solid var(--border);
@@ -675,25 +824,38 @@ class QuotesViewProvider {
 
     .index-widget {
       display: grid;
-      grid-template-columns: minmax(82px, auto) auto;
+      grid-template-columns: minmax(0, auto) auto;
       gap: 8px;
       align-items: center;
+      min-width: 0;
       max-width: 100%;
       padding: 6px 0 0;
     }
 
     .index-quote {
+      min-width: 0;
+      max-width: 45vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
       text-align: right;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
-    .index-price {
-      font-weight: 700;
+    .refreshing .group,
+    .refreshing-index {
+      animation: market-monitoring-breathe 1.25s ease-in-out infinite;
     }
 
-    .price {
-      font-weight: 700;
+    @keyframes market-monitoring-breathe {
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.62;
+      }
     }
 
     .up {
@@ -763,6 +925,7 @@ class QuotesViewProvider {
     let selectedIndexCode = viewState.selectedIndexCode || 'sh000001';
     let editingGroups = viewState.editingGroups || {};
     let collapsedGroups = viewState.collapsedGroups || {};
+    let tableSort = viewState.tableSort || {};
     let latestSnapshot;
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
@@ -822,12 +985,49 @@ class QuotesViewProvider {
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
         }
+      } else if (action === 'sortColumn') {
+        const group = button.dataset.group || '';
+        const column = button.dataset.column || '';
+        const current = tableSort[group];
+        let nextSort;
+        if (!current || current.column !== column) {
+          nextSort = { column, direction: 'asc' };
+        } else if (current.direction === 'asc') {
+          nextSort = { column, direction: 'desc' };
+        } else {
+          nextSort = undefined;
+        }
+
+        tableSort = { ...tableSort };
+        if (nextSort) {
+          tableSort[group] = nextSort;
+        } else {
+          delete tableSort[group];
+        }
+        persistViewState();
+        if (latestSnapshot) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+        }
       }
+    });
+    app.addEventListener('change', (event) => {
+      const input = event.target.closest('input[data-field]');
+      if (!input) {
+        return;
+      }
+
+      vscode.postMessage({
+        command: 'updateSymbolField',
+        index: Number(input.dataset.index),
+        field: input.dataset.field,
+        value: input.value.trim()
+      });
     });
     indexSelect.addEventListener('change', () => {
       selectedIndexCode = indexSelect.value || 'sh000001';
       persistViewState();
       renderIndex(latestSnapshot);
+      vscode.postMessage({ command: 'refreshIndex' });
     });
 
     window.addEventListener('message', (event) => {
@@ -846,6 +1046,7 @@ class QuotesViewProvider {
 
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? '刷新中 · ' : '') + snapshot.phaseName + extra;
+      app.classList.toggle('refreshing', Boolean(snapshot.loading));
       sortHint.textContent = snapshot.sortBy === 'configured'
         ? ''
         : '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。';
@@ -872,15 +1073,15 @@ class QuotesViewProvider {
 
       const selected = indexes.find((item) => item.code === selectedIndexCode);
       if (!selected) {
-        indexQuote.className = 'index-quote flat';
+        indexQuote.className = snapshot.loading ? 'index-quote refreshing-index' : 'index-quote';
         indexQuote.textContent = '--';
         return;
       }
 
       const trend = selected.changePercent > 0 ? 'up' : selected.changePercent < 0 ? 'down' : 'flat';
-      const price = selected.price === null ? '--' : selected.price.toFixed(snapshot.priceDecimalPlaces);
+      const price = selected.price === null ? '--' : formatDecimal(selected.price, snapshot.priceDecimalPlaces);
       const percent = selected.changePercent === null ? '--' : formatSigned(selected.changePercent, 2) + '%';
-      indexQuote.className = 'index-quote';
+      indexQuote.className = snapshot.loading ? 'index-quote refreshing-index' : 'index-quote';
       indexQuote.innerHTML = '<span class="index-price">' + price + '</span> <span class="quote-change ' + trend + '">' + percent + '</span>';
     }
 
@@ -892,7 +1093,13 @@ class QuotesViewProvider {
       return groups.map((group) => {
         const editing = Boolean(editingGroups[group.name]);
         const collapsed = Boolean(collapsedGroups[group.name]);
-        const items = collapsed ? '' : group.items.map((quote) => renderQuote(quote, snapshot, editing)).join('');
+        const columns = snapshot.quoteColumns || ['identity', 'price', 'changePercent'];
+        const sort = tableSort[group.name];
+        const sortedItems = sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
+        const gridClass = getQuoteGridClass(columns);
+        const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
+        const items = collapsed ? '' : sortedItems.map((quote) => renderQuote(quote, snapshot, editing, columns, gridClass)).join('');
+        const table = collapsed ? '' : '<div class="quote-table">' + header + items + '</div>';
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
         const average = stats.averageChangePercent === null ? '--' : formatSigned(stats.averageChangePercent, 2) + '%';
         return '<section class="group' + (editing ? ' editing' : '') + '">' +
@@ -912,33 +1119,35 @@ class QuotesViewProvider {
               '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(group.name) + '" title="' + (editing ? '完成' : '编辑') + '">' + (editing ? '✓' : '✎') + '</button>' +
             '</span>' +
           '</div>' +
-          items +
+          table +
           '</section>';
       }).join('');
     }
 
-    function renderQuote(quote, snapshot, editing) {
+    function renderQuoteHeader(groupName, columns, editing, gridClass, sort) {
+      return '<div class="quote quote-header ' + gridClass + (editing ? ' editing' : '') + '">' +
+        columns.map((column) => {
+          const active = sort && sort.column === column;
+          const icon = active ? sort.direction === 'asc' ? ' ↑' : ' ↓' : '';
+          return '<div class="quote-cell ' + getColumnClass(column) + '">' +
+            '<button class="sort-button" data-action="sortColumn" data-group="' + escapeHtml(groupName) + '" data-column="' + column + '" title="按' + escapeHtml(getColumnLabel(column)) + '排序">' + escapeHtml(getColumnLabel(column)) + icon + '</button>' +
+          '</div>';
+        }).join('') +
+        (editing ? '<div class="quote-cell numeric">操作</div>' : '') +
+      '</div>';
+    }
+
+    function renderQuote(quote, snapshot, editing, columns, gridClass) {
       const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
-      const percent = quote.changePercent === null ? '--' : formatSigned(quote.changePercent, 2) + '%';
-      const change = quote.change === null ? '--' : formatSigned(quote.change, 3);
-      const price = quote.price === null ? '--' : quote.price.toFixed(snapshot.priceDecimalPlaces);
-      const time = quote.time || quote.status || '';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
       const index = Number(quote.index);
       const first = index <= 0;
       const last = index >= snapshot.symbolCount - 1;
+      const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend)).join('');
 
-      return '<article class="quote' + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + '">' +
-        '<div class="main">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">预警</span>' : '') + '</div>' +
-          '<div class="code">' + escapeHtml(quote.code) + '</div>' +
-        '</div>' +
-        '<div class="numbers">' +
-          '<div class="price">' + price + '</div>' +
-          '<div class="meta quote-change ' + trend + '">' + change + ' / ' + percent + '</div>' +
-          '<div class="time">' + escapeHtml(time) + '</div>' +
-        '</div>' +
+      return '<article class="quote ' + gridClass + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + '">' +
+        cells +
         (editing ? '<div class="quote-actions">' +
           '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="上移" ' + (first ? 'disabled' : '') + '>↑</button>' +
           '<button class="secondary icon-button" data-action="down" data-index="' + index + '" title="下移" ' + (last ? 'disabled' : '') + '>↓</button>' +
@@ -947,17 +1156,151 @@ class QuotesViewProvider {
       '</article>';
     }
 
+    function renderQuoteCell(column, quote, snapshot, trend) {
+      const digits = snapshot.priceDecimalPlaces;
+      const cellClass = 'quote-cell ' + getColumnClass(column);
+      if (column === 'identity') {
+        const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
+        const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
+        return '<div class="' + cellClass + '">' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">预警</span>' : '') + '</div>' +
+          '<div class="code">' + escapeHtml(quote.code) + '</div>' +
+        '</div>';
+      }
+      if (column === 'price') {
+        return '<div class="' + cellClass + ' price">' + (quote.price === null ? '--' : formatDecimal(quote.price, digits)) + '</div>';
+      }
+      if (column === 'changePercent') {
+        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (quote.changePercent === null ? '--' : formatSigned(quote.changePercent, 2) + '%') + '</div>';
+      }
+      if (column === 'change') {
+        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (quote.change === null ? '--' : formatSignedDecimal(quote.change, digits)) + '</div>';
+      }
+      if (column === 'cost') {
+        return '<div class="' + cellClass + '">' + renderEditableNumber(quote, 'cost', digits) + '</div>';
+      }
+      if (column === 'holding') {
+        return '<div class="' + cellClass + '">' + renderEditableNumber(quote, 'holding', 0) + '</div>';
+      }
+      if (column === 'netProfit') {
+        const profit = calculateNetProfit(quote);
+        const profitTrend = profit > 0 ? 'up' : profit < 0 ? 'down' : 'flat';
+        return '<div class="' + cellClass + ' quote-change ' + profitTrend + '">' + (profit === null ? '--' : formatSignedDecimal(profit, digits)) + '</div>';
+      }
+      return '<div class="' + cellClass + '">--</div>';
+    }
+
+    function renderEditableNumber(quote, field, digits) {
+      const value = quote[field];
+      const displayValue = value === null || value === undefined ? '' : formatDecimal(value, digits);
+      return '<input class="cell-input" type="number" step="any" inputmode="decimal" data-field="' + field + '" data-index="' + quote.index + '" value="' + escapeHtml(displayValue) + '" placeholder="--" title="' + getColumnLabel(field) + '">';
+    }
+
+    function calculateNetProfit(quote) {
+      if (quote.price === null || quote.cost === null || quote.cost === undefined || quote.holding === null || quote.holding === undefined) {
+        return null;
+      }
+      return (quote.price - quote.cost) * quote.holding;
+    }
+
+    function getQuoteGridClass(columns) {
+      return 'cols-' + Math.max(1, Math.min(7, columns.length));
+    }
+
+    function getColumnLabel(column) {
+      return {
+        identity: '名称/代码',
+        price: '价格',
+        changePercent: '涨跌幅',
+        change: '涨跌额',
+        cost: '成本',
+        holding: '持仓',
+        netProfit: '净收益额'
+      }[column] || column;
+    }
+
+    function getColumnClass(column) {
+      return column === 'identity' ? '' : 'numeric';
+    }
+
+    function sortQuotesForColumn(items, column, direction) {
+      const multiplier = direction === 'asc' ? 1 : -1;
+      return [...items].sort((left, right) => {
+        const comparison = compareColumnValue(left, right, column);
+        if (comparison !== 0) {
+          return comparison * multiplier;
+        }
+        return left.index - right.index;
+      });
+    }
+
+    function compareColumnValue(left, right, column) {
+      if (column === 'identity') {
+        return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      }
+
+      const leftValue = getColumnSortValue(left, column);
+      const rightValue = getColumnSortValue(right, column);
+      const leftMissing = leftValue === null || leftValue === undefined || Number.isNaN(leftValue);
+      const rightMissing = rightValue === null || rightValue === undefined || Number.isNaN(rightValue);
+      if (leftMissing && rightMissing) {
+        return 0;
+      }
+      if (leftMissing) {
+        return 1;
+      }
+      if (rightMissing) {
+        return -1;
+      }
+      if (leftValue === rightValue) {
+        return 0;
+      }
+      return leftValue > rightValue ? 1 : -1;
+    }
+
+    function getColumnSortValue(quote, column) {
+      if (column === 'price') {
+        return quote.price;
+      }
+      if (column === 'changePercent') {
+        return quote.changePercent;
+      }
+      if (column === 'change') {
+        return quote.change;
+      }
+      if (column === 'cost') {
+        return quote.cost;
+      }
+      if (column === 'holding') {
+        return quote.holding;
+      }
+      if (column === 'netProfit') {
+        return calculateNetProfit(quote);
+      }
+      return null;
+    }
+
     function persistViewState() {
       viewState = {
         selectedIndexCode,
         editingGroups,
-        collapsedGroups
+        collapsedGroups,
+        tableSort
       };
       vscode.setState(viewState);
     }
 
     function formatSigned(value, digits) {
       const formatted = Number(value).toFixed(digits);
+      return value > 0 ? '+' + formatted : formatted;
+    }
+
+    function formatDecimal(value, digits) {
+      return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1');
+    }
+
+    function formatSignedDecimal(value, digits) {
+      const formatted = formatDecimal(value, digits);
       return value > 0 ? '+' + formatted : formatted;
     }
 
@@ -992,16 +1335,13 @@ function readConfig() {
     enableAlertNotifications: config.get('enableAlertNotifications', true),
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
-    showStatusBar: config.get('showStatusBar', true),
+    showStatusBar: config.get('showStatusBar', false),
     sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
+    quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', ['identity', 'price', 'changePercent'])),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
-    colors: {
-      up: sanitizeColor(config.get('colors.up', '#e51400'), '#e51400'),
-      down: sanitizeColor(config.get('colors.down', '#16a34a'), '#16a34a'),
-      flat: sanitizeColor(config.get('colors.flat', '#8b949e'), '#8b949e')
-    }
+    colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
 }
 
@@ -1016,11 +1356,20 @@ async function updateConfiguredSymbols(symbols) {
 }
 
 function toConfigSymbol(symbol) {
-  return {
+  const configSymbol = {
     code: symbol.code,
     name: symbol.name,
     group: symbol.group
   };
+
+  if (symbol.cost !== null && symbol.cost !== undefined) {
+    configSymbol.cost = symbol.cost;
+  }
+  if (symbol.holding !== null && symbol.holding !== undefined) {
+    configSymbol.holding = symbol.holding;
+  }
+
+  return configSymbol;
 }
 
 function normalizeSymbolConfig(item) {
@@ -1036,7 +1385,9 @@ function normalizeSymbolConfig(item) {
   return {
     code,
     name: String(item.name || code).trim() || code,
-    group: String(item.group || DEFAULT_GROUP).trim() || DEFAULT_GROUP
+    group: String(item.group || DEFAULT_GROUP).trim() || DEFAULT_GROUP,
+    cost: optionalNumber(item.cost),
+    holding: optionalNumber(item.holding)
   };
 }
 
@@ -1115,8 +1466,7 @@ function optionalNumber(value) {
 
 async function fetchQuotes(symbols, timeoutMs) {
   const uniqueCodes = Array.from(new Set(symbols.map((symbol) => symbol.code)));
-  const query = uniqueCodes.join(',');
-  const rawQuotes = await fetchRawQuotes(query, timeoutMs);
+  const rawQuotes = await fetchRawQuotes(uniqueCodes, timeoutMs);
 
   return symbols.map((symbol) => {
     const raw = rawQuotes.get(symbol.code);
@@ -1139,11 +1489,11 @@ async function fetchQuotes(symbols, timeoutMs) {
   });
 }
 
-async function fetchRawQuotes(query, timeoutMs) {
+async function fetchRawQuotes(codes, timeoutMs) {
   const providers = [
     {
       name: '新浪',
-      url: `https://hq.sinajs.cn/list=${query}`,
+      url: (query) => `https://hq.sinajs.cn/list=${query}`,
       headers: {
         Referer: 'https://finance.sina.com.cn/',
         'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
@@ -1152,7 +1502,7 @@ async function fetchRawQuotes(query, timeoutMs) {
     },
     {
       name: '腾讯',
-      url: `https://qt.gtimg.cn/q=${query}`,
+      url: (query) => `https://qt.gtimg.cn/q=${query}`,
       headers: {
         Referer: 'https://gu.qq.com/',
         'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
@@ -1160,22 +1510,47 @@ async function fetchRawQuotes(query, timeoutMs) {
       parse: parseTencentResponse
     }
   ];
+  const query = codes.join(',');
+  const mergedQuotes = new Map();
   const errors = [];
 
   for (const provider of providers) {
     try {
-      const body = await requestText(provider.url, timeoutMs, provider.headers);
+      const body = await requestText(provider.url(query), timeoutMs, provider.headers);
       const quotes = provider.parse(body);
-      if (quotes.size > 0) {
-        return quotes;
+
+      for (const code of codes) {
+        if (mergedQuotes.has(code)) {
+          continue;
+        }
+
+        const quote = quotes.get(code);
+        if (isUsableQuote(quote)) {
+          mergedQuotes.set(code, quote);
+        }
       }
-      errors.push(`${provider.name}: 未返回有效行情`);
+
+      if (codes.every((code) => mergedQuotes.has(code))) {
+        return mergedQuotes;
+      }
+
+      if (quotes.size === 0) {
+        errors.push(`${provider.name}: 未返回有效行情`);
+      }
     } catch (error) {
       errors.push(`${provider.name}: ${getErrorMessage(error)}`);
     }
   }
 
+  if (mergedQuotes.size > 0) {
+    return mergedQuotes;
+  }
+
   throw new Error(`行情请求失败：${errors.join('；')}`);
+}
+
+function isUsableQuote(quote) {
+  return Boolean(quote && quote.price !== null);
 }
 
 function evaluateAlerts(quotes, rules, priceDecimalPlaces) {
@@ -1539,6 +1914,9 @@ function formatPercent(value) {
 }
 
 function getTrendColor(value, colors) {
+  if (colors.mode === 'none') {
+    return undefined;
+  }
   if (value > 0) {
     return colors.up;
   }
@@ -1546,6 +1924,38 @@ function getTrendColor(value, colors) {
     return colors.down;
   }
   return colors.flat;
+}
+
+function sanitizeColorMode(value) {
+  const allowed = new Set(['none', 'redUpGreenDown', 'greenUpRedDown']);
+  return allowed.has(value) ? value : 'none';
+}
+
+function getColorPalette(mode) {
+  if (mode === 'redUpGreenDown') {
+    return {
+      mode,
+      up: '#e51400',
+      down: '#16a34a',
+      flat: 'var(--vscode-foreground)'
+    };
+  }
+
+  if (mode === 'greenUpRedDown') {
+    return {
+      mode,
+      up: '#16a34a',
+      down: '#e51400',
+      flat: 'var(--vscode-foreground)'
+    };
+  }
+
+  return {
+    mode: 'none',
+    up: 'var(--vscode-foreground)',
+    down: 'var(--vscode-foreground)',
+    flat: 'var(--vscode-foreground)'
+  };
 }
 
 function buildStatusTooltip(snapshot) {
@@ -1578,12 +1988,15 @@ function sanitizeDecimalPlaces(value) {
   return Math.min(6, Math.max(0, parsed));
 }
 
-function sanitizeColor(value, fallback) {
-  const color = String(value || '').trim();
-  if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(color) || /^var\(--vscode-[a-zA-Z0-9-]+\)$/.test(color)) {
-    return color;
+function sanitizeQuoteColumns(value) {
+  const allowed = new Set(['identity', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
+  const defaults = ['identity', 'price', 'changePercent'];
+  if (!Array.isArray(value)) {
+    return defaults;
   }
-  return fallback;
+
+  const columns = value.filter((column, index) => allowed.has(column) && value.indexOf(column) === index);
+  return columns.length > 0 ? columns : defaults;
 }
 
 function createNonce() {
