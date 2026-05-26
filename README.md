@@ -1,0 +1,143 @@
+# Market Monitoring
+
+一个用于 VS Code 的市场行情监控扩展，支持自定义标的、分组、排序、预警和状态栏摘要。
+
+## 功能
+
+- 自定义监控标的、展示名称和分组。
+- 分组支持折叠和展开。
+- 在行情面板中添加标的，并通过分组标题的编辑按钮删除、上移、下移标的。
+- 自定义上涨、下跌、平盘颜色。
+- 自定义价格小数位。
+- 分组统计上涨、下跌、平盘数量和平均涨跌幅。
+- 支持按配置顺序、涨跌幅、价格、名称、代码排序。
+- 支持价格和涨跌幅预警。
+- 底部右下角提供指数下拉切换。
+- Activity Bar 独立行情视图。
+- 状态栏展示紧凑行情摘要。
+- 支持手动刷新、启动、暂停。
+
+## 配置示例
+
+在 VS Code `settings.json` 中配置：
+
+```json
+{
+  "marketMonitoring.symbols": [
+    {
+      "code": "sz300308",
+      "name": "中际旭创",
+      "group": "观察"
+    },
+    {
+      "code": "sh603986",
+      "name": "兆易创新",
+      "group": "自选"
+    }
+  ],
+  "marketMonitoring.sortBy": "changePercent",
+  "marketMonitoring.sortDirection": "desc",
+  "marketMonitoring.priceDecimalPlaces": 2,
+  "marketMonitoring.refreshIntervalSeconds": 5,
+  "marketMonitoring.onlyDuringTradingTime": true,
+  "marketMonitoring.colors.up": "#e51400",
+  "marketMonitoring.colors.down": "#16a34a",
+  "marketMonitoring.colors.flat": "#8b949e"
+}
+```
+
+当前数据源支持的常见代码格式包括：
+
+- `sh600519`
+- `sz000001`
+- `600519`
+- `510300`
+- `159915`
+- `600519.SH`
+
+无交易所前缀时会按当前数据源的常见代码规则自动推断。
+
+## 预警配置
+
+`marketMonitoring.alerts` 支持价格和涨跌幅阈值。一个规则可以同时配置多个阈值：
+
+```json
+{
+  "marketMonitoring.alerts": [
+    {
+      "code": "sz300308",
+      "name": "中际旭创",
+      "changePercentAbove": 1.2,
+      "changePercentBelow": -1.0
+    },
+    {
+      "code": "sh603986",
+      "name": "兆易创新",
+      "priceAbove": 180,
+      "priceBelow": 160
+    }
+  ],
+  "marketMonitoring.enableAlerts": true,
+  "marketMonitoring.enableAlertNotifications": true
+}
+```
+
+预警触发后会：
+
+- 在 VS Code 右下角弹出通知。
+- 在行情面板中给对应标的加预警标记。
+- 在状态栏显示预警数量。
+
+同一条预警在条件持续满足时不会重复弹窗；条件解除后再次触发才会重新提醒。
+
+## 排序配置
+
+行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。上移、下移、删除按钮默认隐藏，点击分组标题右侧的编辑按钮后显示。若希望面板严格按这个手动顺序展示，请使用：
+
+```json
+{
+  "marketMonitoring.sortBy": "configured"
+}
+```
+
+`marketMonitoring.sortBy` 可选值：
+
+- `configured`：保持 `marketMonitoring.symbols` 中的配置顺序。
+- `changePercent`：按涨跌幅排序。
+- `price`：按最新价排序。
+- `name`：按展示名称排序。
+- `code`：按代码排序。
+
+`marketMonitoring.sortDirection` 可选 `desc` 或 `asc`。
+
+## 价格小数位
+
+`marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数，默认 `2`，支持 `0-6`。
+
+## 指数切换
+
+行情面板底部右下角提供指数下拉列表，默认显示主指数。指数行情由扩展自动拉取，不需要添加到 `marketMonitoring.symbols`。
+
+## 刷新时段
+
+默认仅在内置活跃交易时段刷新。非交易时段会在缺少本地行情快照时拉取一次最新行情，用于显示收盘后的价格；之后不会按高频间隔持续刷新。节假日不会自动识别。如果需要全天刷新，可将 `marketMonitoring.onlyDuringTradingTime` 设为 `false`。
+
+行情数据优先来自新浪财经公开行情接口，失败后会自动切换到腾讯行情接口。扩展会在本机 VS Code 进程中直接请求接口。默认请求超时为 10 秒，可通过 `marketMonitoring.requestTimeoutMs` 调整。
+
+## 开发
+
+```bash
+npm install
+npm run check
+```
+
+然后在 VS Code 中按 F5 启动扩展开发宿主。
+
+调试配置默认带有 `--disable-extensions`，这样 Extension Development Host 只加载当前开发中的扩展，避免其他本机扩展的日志干扰排查。
+
+## 打包
+
+```bash
+npm install
+npm run package
+```

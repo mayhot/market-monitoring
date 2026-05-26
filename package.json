@@ -1,0 +1,269 @@
+{
+  "name": "market-monitoring",
+  "displayName": "Market Monitoring",
+  "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:marketMonitoring.quotesView",
+    "onCommand:marketMonitoring.refresh",
+    "onCommand:marketMonitoring.start",
+    "onCommand:marketMonitoring.stop",
+    "onCommand:marketMonitoring.openSettings"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "marketMonitoring.refresh",
+        "title": "Market Monitoring: Refresh Quotes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "marketMonitoring.start",
+        "title": "Market Monitoring: Start",
+        "icon": "$(play)"
+      },
+      {
+        "command": "marketMonitoring.stop",
+        "title": "Market Monitoring: Stop",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "marketMonitoring.openSettings",
+        "title": "Market Monitoring: Open Settings",
+        "icon": "$(settings-gear)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "marketMonitoring",
+          "title": "Market",
+          "icon": "resources/market.svg"
+        }
+      ]
+    },
+    "views": {
+      "marketMonitoring": [
+        {
+          "id": "marketMonitoring.quotesView",
+          "type": "webview",
+          "name": "Market Monitoring",
+          "icon": "$(graph-line)"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "marketMonitoring.refresh",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "navigation"
+        },
+        {
+          "command": "marketMonitoring.openSettings",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "marketMonitoring.refresh"
+        },
+        {
+          "command": "marketMonitoring.start"
+        },
+        {
+          "command": "marketMonitoring.stop"
+        },
+        {
+          "command": "marketMonitoring.openSettings"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Market Monitoring",
+      "properties": {
+        "marketMonitoring.symbols": {
+          "type": "array",
+          "default": [
+            {
+              "code": "sz300308",
+              "name": "中际旭创",
+              "group": "观察"
+            },
+            {
+              "code": "sh603986",
+              "name": "兆易创新",
+              "group": "自选"
+            }
+          ],
+          "markdownDescription": "Market symbols to monitor. `code` supports prefixed forms like `sh600519` and `sz159915`, or six-digit codes such as `600519`, `510300`, `000001`, `159915`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Market symbol code."
+              },
+              "name": {
+                "type": "string",
+                "description": "Custom display name."
+              },
+              "group": {
+                "type": "string",
+                "description": "Custom group name."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "marketMonitoring.refreshIntervalSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 2,
+          "maximum": 120,
+          "description": "Quote refresh interval in seconds."
+        },
+        "marketMonitoring.onlyDuringTradingTime": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refresh only during configured active market sessions. Market holidays are not automatically detected."
+        },
+        "marketMonitoring.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a compact market summary in the VS Code status bar."
+        },
+        "marketMonitoring.priceDecimalPlaces": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 6,
+          "description": "Decimal places used for quote price display."
+        },
+        "marketMonitoring.sortBy": {
+          "type": "string",
+          "default": "configured",
+          "enum": [
+            "configured",
+            "changePercent",
+            "price",
+            "name",
+            "code"
+          ],
+          "enumDescriptions": [
+            "Keep the order from marketMonitoring.symbols.",
+            "Sort by change percentage.",
+            "Sort by latest price.",
+            "Sort by display name.",
+            "Sort by code."
+          ],
+          "description": "Sort quotes inside each group."
+        },
+        "marketMonitoring.sortDirection": {
+          "type": "string",
+          "default": "desc",
+          "enum": [
+            "desc",
+            "asc"
+          ],
+          "description": "Sort direction for sortable quote fields."
+        },
+        "marketMonitoring.enableAlerts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable quote alert evaluation."
+        },
+        "marketMonitoring.enableAlertNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VS Code notifications when quote alerts are newly triggered."
+        },
+        "marketMonitoring.alerts": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Alert rules. A rule can contain one or more thresholds such as `priceAbove`, `priceBelow`, `changePercentAbove`, or `changePercentBelow`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Market symbol code."
+              },
+              "name": {
+                "type": "string",
+                "description": "Optional display name used in alert notifications."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable this alert rule."
+              },
+              "priceAbove": {
+                "type": "number",
+                "description": "Trigger when latest price is greater than or equal to this value."
+              },
+              "priceBelow": {
+                "type": "number",
+                "description": "Trigger when latest price is less than or equal to this value."
+              },
+              "changePercentAbove": {
+                "type": "number",
+                "description": "Trigger when change percentage is greater than or equal to this value."
+              },
+              "changePercentBelow": {
+                "type": "number",
+                "description": "Trigger when change percentage is less than or equal to this value."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "marketMonitoring.colors.up": {
+          "type": "string",
+          "default": "#e51400",
+          "description": "Color for rising prices."
+        },
+        "marketMonitoring.colors.down": {
+          "type": "string",
+          "default": "#16a34a",
+          "description": "Color for falling prices."
+        },
+        "marketMonitoring.colors.flat": {
+          "type": "string",
+          "default": "#8b949e",
+          "description": "Color for unchanged prices."
+        },
+        "marketMonitoring.requestTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 20000,
+          "description": "Quote request timeout in milliseconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check src/extension.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.2"
+  }
+}
