@@ -137,6 +137,17 @@
             "additionalProperties": false
           }
         },
+        "marketMonitoring.groups": {
+          "type": "array",
+          "default": [
+            "自选"
+          ],
+          "markdownDescription": "Custom groups shown in the market monitoring view. Empty groups are kept visible so symbols can be added inside a specific group.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
         "marketMonitoring.refreshIntervalSeconds": {
           "type": "number",
           "default": 5,
@@ -179,7 +190,7 @@
         "marketMonitoring.quoteColumns": {
           "type": "array",
           "default": [
-            "identity",
+            "name",
             "price",
             "changePercent"
           ],
@@ -187,7 +198,8 @@
           "items": {
             "type": "string",
             "enum": [
-              "identity",
+              "name",
+              "code",
               "price",
               "changePercent",
               "change",
@@ -196,7 +208,8 @@
               "netProfit"
             ],
             "enumDescriptions": [
-              "Name and code.",
+              "Name.",
+              "Code.",
               "Latest price.",
               "Change percentage.",
               "Price change.",

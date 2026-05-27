@@ -4,7 +4,7 @@ const vscode = require('vscode');
 
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
-const DEFAULT_GROUP = '未分组';
+const DEFAULT_GROUP = '自选';
 const INDEX_SYMBOLS = [
   { code: 'sh000985', name: '中证全指', group: '指数' },
   { code: 'sh000001', name: '上证指数', group: '指数' },
@@ -51,6 +51,12 @@ function activate(context) {
       monitor.stop(true);
     } else if (message.command === 'addSymbol') {
       monitor.addSymbol(message.symbol);
+    } else if (message.command === 'searchSymbols') {
+      monitor.searchSymbols(message.query, message.requestId);
+    } else if (message.command === 'addGroup') {
+      monitor.addGroup(message.name);
+    } else if (message.command === 'renameGroup') {
+      monitor.renameGroup(message.oldName, message.newName);
     } else if (message.command === 'removeSymbol') {
       monitor.removeSymbol(message.index);
     } else if (message.command === 'moveSymbol') {
@@ -136,6 +142,64 @@ class MarketMonitor {
     vscode.window.showInformationMessage(`已添加 ${normalized.name}`);
   }
 
+  async searchSymbols(query, requestId) {
+    const keyword = String(query || '').trim();
+    if (!keyword) {
+      this.provider.postSymbolSearchResults(requestId, keyword, []);
+      return;
+    }
+
+    try {
+      const results = await fetchSymbolSearchResults(keyword, this.config.requestTimeoutMs);
+      this.provider.postSymbolSearchResults(requestId, keyword, results);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.output.appendLine(`[${new Date().toISOString()}] 标的搜索失败: ${message}`);
+      this.provider.postSymbolSearchResults(requestId, keyword, [], message);
+    }
+  }
+
+  async addGroup(name) {
+    const normalizedName = normalizeGroupName(name);
+    if (!normalizedName) {
+      vscode.window.showWarningMessage('请输入有效的分组名称');
+      return;
+    }
+
+    if (this.config.groups.includes(normalizedName)) {
+      vscode.window.showInformationMessage(`${normalizedName} 分组已存在`);
+      return;
+    }
+
+    await updateConfiguredGroups([...this.config.groups, normalizedName]);
+    vscode.window.showInformationMessage(`已添加分组 ${normalizedName}`);
+  }
+
+  async renameGroup(oldName, newName) {
+    const currentName = normalizeGroupName(oldName);
+    const nextName = normalizeGroupName(newName);
+    if (!currentName || !nextName || currentName === nextName) {
+      return;
+    }
+
+    const nextGroups = this.config.groups
+      .map((group) => group === currentName ? nextName : group)
+      .filter((group, index, groups) => groups.indexOf(group) === index);
+    const nextSymbols = this.config.symbols.map((symbol) => {
+      if (symbol.group !== currentName) {
+        return symbol;
+      }
+      return {
+        ...symbol,
+        group: nextName
+      };
+    });
+
+    await updateConfiguredGroups(nextGroups.length > 0 ? nextGroups : [DEFAULT_GROUP]);
+    await updateConfiguredSymbols(nextSymbols);
+    vscode.window.showInformationMessage(`已修改分组 ${currentName} -> ${nextName}`);
+  }
+
   async removeSymbol(index) {
     const parsedIndex = Number(index);
     if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length) {
@@ -143,6 +207,15 @@ class MarketMonitor {
     }
 
     const symbol = this.config.symbols[parsedIndex];
+    const choice = await vscode.window.showWarningMessage(
+      `确认删除 ${symbol.name}？`,
+      { modal: true },
+      '删除'
+    );
+    if (choice !== '删除') {
+      return;
+    }
+
     await updateConfiguredSymbols(this.config.symbols.filter((_, currentIndex) => currentIndex !== parsedIndex));
     vscode.window.showInformationMessage(`已删除 ${symbol.name}`);
   }
@@ -164,11 +237,13 @@ class MarketMonitor {
 
   async updateSymbolField(index, field, value) {
     const parsedIndex = Number(index);
-    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length || !['cost', 'holding'].includes(field)) {
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length || !['name', 'cost', 'holding'].includes(field)) {
       return;
     }
 
-    const parsedValue = optionalNumber(value);
+    const parsedValue = field === 'name'
+      ? String(value || '').trim()
+      : optionalNumber(value);
     const nextSymbols = this.config.symbols.map((symbol, currentIndex) => {
       if (currentIndex !== parsedIndex) {
         return symbol;
@@ -176,7 +251,7 @@ class MarketMonitor {
 
       return {
         ...symbol,
-        [field]: parsedValue
+        [field]: field === 'name' ? (parsedValue || symbol.code) : parsedValue
       };
     });
 
@@ -311,7 +386,7 @@ class MarketMonitor {
       symbolCount: this.config.symbols.length,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
-      groups: groupQuotes(this.lastQuotes, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection)
+      groups: groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection)
     };
   }
 }
@@ -332,7 +407,7 @@ class QuotesViewProvider {
       sortBy: 'configured',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
-      quoteColumns: ['identity', 'price', 'changePercent'],
+      quoteColumns: ['name', 'price', 'changePercent'],
       symbolCount: 0,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: INDEX_SYMBOLS.map((symbol) => ({
@@ -371,6 +446,18 @@ class QuotesViewProvider {
     this.snapshot = snapshot;
     if (this.view) {
       this.view.webview.postMessage({ type: 'snapshot', snapshot });
+    }
+  }
+
+  postSymbolSearchResults(requestId, query, results, error = '') {
+    if (this.view) {
+      this.view.webview.postMessage({
+        type: 'symbolSearchResults',
+        requestId,
+        query,
+        results,
+        error
+      });
     }
   }
 
@@ -451,6 +538,16 @@ class QuotesViewProvider {
       background: var(--vscode-button-secondaryHoverBackground);
     }
 
+    button.danger {
+      color: var(--vscode-errorForeground);
+      border-color: color-mix(in srgb, var(--vscode-errorForeground) 55%, transparent);
+    }
+
+    button.danger:hover {
+      color: var(--vscode-errorForeground);
+      background: color-mix(in srgb, var(--vscode-errorForeground) 14%, transparent);
+    }
+
     .icon-button {
       min-width: 28px;
       height: 26px;
@@ -483,9 +580,10 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
+    .group-form,
     .symbol-form {
       display: grid;
-      grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 6px;
       min-width: 0;
       max-width: 100%;
@@ -496,32 +594,83 @@ class QuotesViewProvider {
       background: color-mix(in srgb, var(--surface-soft) 52%, transparent);
     }
 
-    .symbol-form-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 6px;
-      grid-column: 1 / -1;
+    .group-form {
+      grid-template-columns: minmax(0, 1fr) 30px;
     }
 
-    .symbol-form > button {
-      grid-column: 2;
-      grid-row: 1;
-      white-space: nowrap;
+    .symbol-search-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 30px;
+      gap: 6px;
     }
 
     .add-button {
       width: 100%;
     }
 
-    @media (max-width: 280px) {
-      .symbol-form {
-        grid-template-columns: 1fr;
-      }
+    .symbol-results {
+      display: grid;
+      gap: 4px;
+      max-height: 168px;
+      overflow-y: auto;
+    }
 
-      .symbol-form > button {
-        grid-column: 1;
-        grid-row: auto;
-      }
+    .symbol-result {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      min-height: 30px;
+      padding: 5px 7px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      text-align: left;
+    }
+
+    .symbol-result:hover,
+    .symbol-result.selected {
+      border-color: var(--focus);
+      background: var(--surface-hover);
+    }
+
+    .symbol-result-main {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .symbol-result-code,
+    .symbol-result-empty {
+      color: var(--muted);
+    }
+
+    .symbol-result-empty {
+      padding: 3px 1px;
+    }
+
+    .group-footer {
+      display: grid;
+      gap: 7px;
+      padding: 8px;
+      border-top: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface-soft) 38%, transparent);
+    }
+
+    .group-footer-actions,
+    .group-rename-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    .group-rename-row input {
+      flex: 1;
     }
 
     input {
@@ -644,7 +793,7 @@ class QuotesViewProvider {
       display: grid;
       gap: 6px;
       align-items: center;
-      min-width: max-content;
+      min-width: 0;
       padding: 7px 8px;
       border-top: 1px solid var(--border);
       background: transparent;
@@ -656,59 +805,67 @@ class QuotesViewProvider {
     }
 
     .quote.cols-1 {
-      grid-template-columns: minmax(88px, 1fr);
+      grid-template-columns: minmax(20px, 1fr);
     }
 
     .quote.cols-2 {
-      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content);
+      grid-template-columns: repeat(2, minmax(20px, 1fr));
     }
 
     .quote.cols-3 {
-      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) minmax(70px, max-content);
+      grid-template-columns: repeat(3, minmax(20px, 1fr));
     }
 
     .quote.cols-4 {
-      grid-template-columns: minmax(88px, 1fr) repeat(3, minmax(70px, max-content));
+      grid-template-columns: repeat(4, minmax(20px, 1fr));
     }
 
     .quote.cols-5 {
-      grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(70px, max-content));
+      grid-template-columns: repeat(5, minmax(20px, 1fr));
     }
 
     .quote.cols-6 {
-      grid-template-columns: minmax(88px, 1fr) repeat(5, minmax(70px, max-content));
+      grid-template-columns: repeat(6, minmax(20px, 1fr));
     }
 
     .quote.cols-7 {
-      grid-template-columns: minmax(88px, 1fr) repeat(6, minmax(70px, max-content));
+      grid-template-columns: repeat(7, minmax(20px, 1fr));
+    }
+
+    .quote.cols-8 {
+      grid-template-columns: repeat(8, minmax(20px, 1fr));
     }
 
     .quote.editing.cols-1 {
-      grid-template-columns: minmax(88px, 1fr) auto;
+      grid-template-columns: minmax(20px, 1fr) max-content;
     }
 
     .quote.editing.cols-2 {
-      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) auto;
+      grid-template-columns: repeat(2, minmax(20px, 1fr)) max-content;
     }
 
     .quote.editing.cols-3 {
-      grid-template-columns: minmax(88px, 1fr) minmax(70px, max-content) minmax(70px, max-content) auto;
+      grid-template-columns: repeat(3, minmax(20px, 1fr)) max-content;
     }
 
     .quote.editing.cols-4 {
-      grid-template-columns: minmax(88px, 1fr) repeat(3, minmax(70px, max-content)) auto;
+      grid-template-columns: repeat(4, minmax(20px, 1fr)) max-content;
     }
 
     .quote.editing.cols-5 {
-      grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(70px, max-content)) auto;
+      grid-template-columns: repeat(5, minmax(20px, 1fr)) max-content;
     }
 
     .quote.editing.cols-6 {
-      grid-template-columns: minmax(88px, 1fr) repeat(5, minmax(70px, max-content)) auto;
+      grid-template-columns: repeat(6, minmax(20px, 1fr)) max-content;
     }
 
     .quote.editing.cols-7 {
-      grid-template-columns: minmax(88px, 1fr) repeat(6, minmax(70px, max-content)) auto;
+      grid-template-columns: repeat(7, minmax(20px, 1fr)) max-content;
+    }
+
+    .quote.editing.cols-8 {
+      grid-template-columns: repeat(8, minmax(20px, 1fr)) max-content;
     }
 
     .quote-header {
@@ -736,6 +893,42 @@ class QuotesViewProvider {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .quote-header .quote-cell {
+      position: relative;
+      padding-right: 7px;
+    }
+
+    .column-resizer {
+      position: absolute;
+      top: -5px;
+      right: -4px;
+      width: 8px;
+      height: calc(100% + 10px);
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: col-resize;
+    }
+
+    .column-resizer::after {
+      content: "";
+      position: absolute;
+      top: 5px;
+      right: 3px;
+      width: 1px;
+      height: calc(100% - 10px);
+      background: transparent;
+    }
+
+    .column-resizer:hover::after {
+      background: var(--focus);
+    }
+
+    body.resizing-columns {
+      cursor: col-resize;
+      user-select: none;
     }
 
     .quote-cell.numeric {
@@ -802,12 +995,19 @@ class QuotesViewProvider {
 
     .cell-input {
       width: 100%;
-      min-width: 56px;
+      min-width: 0;
       max-width: 86px;
       text-align: right;
       font-variant-numeric: tabular-nums;
       padding: 3px 5px;
       min-height: 24px;
+    }
+
+    .cell-input.text-input {
+      min-width: 0;
+      max-width: none;
+      text-align: left;
+      font-variant-numeric: normal;
     }
 
     .index-dock {
@@ -842,7 +1042,7 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
-    .refreshing .group,
+    .quote.refreshing-quote,
     .refreshing-index {
       animation: market-monitoring-breathe 1.25s ease-in-out infinite;
     }
@@ -890,13 +1090,9 @@ class QuotesViewProvider {
     <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新">↻</button>
     <button class="secondary icon-button" id="settings" title="设置" aria-label="设置">⚙</button>
   </div>
-  <form class="symbol-form" id="symbol-form">
-    <input id="symbol-code" name="code" placeholder="代码，如 sh510300" autocomplete="off">
-    <div class="symbol-form-row">
-      <input id="symbol-name" name="name" placeholder="名称，可选" autocomplete="off">
-      <input id="symbol-group" name="group" placeholder="分组，可选" autocomplete="off">
-    </div>
-    <button class="secondary icon-button add-button" type="submit" title="添加标的" aria-label="添加标的">＋</button>
+  <form class="group-form" id="group-form">
+    <input id="group-name" name="group" placeholder="新增分组" autocomplete="off">
+    <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
   <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
@@ -908,16 +1104,15 @@ class QuotesViewProvider {
   </footer>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const defaultGroupName = ${JSON.stringify(DEFAULT_GROUP)};
     let viewState = vscode.getState() || {};
     const app = document.getElementById('app');
     const phase = document.getElementById('phase');
     const toggle = document.getElementById('toggle');
     const refresh = document.getElementById('refresh');
     const settings = document.getElementById('settings');
-    const symbolForm = document.getElementById('symbol-form');
-    const symbolCode = document.getElementById('symbol-code');
-    const symbolName = document.getElementById('symbol-name');
-    const symbolGroup = document.getElementById('symbol-group');
+    const groupForm = document.getElementById('group-form');
+    const groupName = document.getElementById('group-name');
     const sortHint = document.getElementById('sort-hint');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
@@ -925,7 +1120,19 @@ class QuotesViewProvider {
     let selectedIndexCode = viewState.selectedIndexCode || 'sh000001';
     let editingGroups = viewState.editingGroups || {};
     let collapsedGroups = viewState.collapsedGroups || {};
+    let addingGroups = viewState.addingGroups || {};
     let tableSort = viewState.tableSort || {};
+    let columnWidths = viewState.columnWidths || {};
+    let resizingColumn;
+    let symbolSearchTimer;
+    let symbolSearchRequestId = 0;
+    let activeSymbolSearchRequestId = 0;
+    let activeSymbolGroup = '';
+    let symbolSearchQuery = '';
+    let symbolSearchResults = [];
+    let selectedSymbol;
+    let symbolSearchLoading = false;
+    let symbolSearchError = '';
     let latestSnapshot;
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
@@ -934,25 +1141,20 @@ class QuotesViewProvider {
       const running = toggle.dataset.running === 'true';
       vscode.postMessage({ command: running ? 'stop' : 'start' });
     });
-    symbolForm.addEventListener('submit', (event) => {
+    groupForm.addEventListener('submit', (event) => {
       event.preventDefault();
-      const code = symbolCode.value.trim();
-      if (!code) {
-        symbolCode.focus();
+      const name = groupName.value.trim();
+      if (!name) {
+        groupName.focus();
         return;
       }
+
       vscode.postMessage({
-        command: 'addSymbol',
-        symbol: {
-          code,
-          name: symbolName.value.trim(),
-          group: symbolGroup.value.trim()
-        }
+        command: 'addGroup',
+        name
       });
-      symbolCode.value = '';
-      symbolName.value = '';
-      symbolGroup.value = '';
-      symbolCode.focus();
+      groupName.value = '';
+      groupName.focus();
     });
     app.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
@@ -974,6 +1176,77 @@ class QuotesViewProvider {
         persistViewState();
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+        }
+      } else if (action === 'addToGroup') {
+        const group = button.dataset.group || '';
+        const opening = !addingGroups[group];
+        addingGroups = {
+          ...addingGroups,
+          [group]: opening
+        };
+        activeSymbolGroup = opening ? group : '';
+        symbolSearchQuery = '';
+        symbolSearchResults = [];
+        selectedSymbol = undefined;
+        symbolSearchError = '';
+        symbolSearchLoading = false;
+        persistViewState();
+        if (latestSnapshot) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          focusGroupSearch(group);
+        }
+      } else if (action === 'selectSymbol') {
+        selectedSymbol = {
+          code: button.dataset.code,
+          name: button.dataset.name
+        };
+        symbolSearchQuery = selectedSymbol.name + ' ' + selectedSymbol.code;
+        renderActiveSymbolResults();
+      } else if (action === 'confirmAddSymbol') {
+        const group = button.dataset.group || activeSymbolGroup || defaultGroupName;
+        if (!selectedSymbol && symbolSearchResults.length === 1) {
+          selectedSymbol = symbolSearchResults[0];
+        }
+
+        if (!selectedSymbol) {
+          symbolSearchError = '请先从搜索结果中选择标的';
+          renderActiveSymbolResults();
+          focusGroupSearch(group);
+          return;
+        }
+
+        vscode.postMessage({
+          command: 'addSymbol',
+          symbol: {
+            code: selectedSymbol.code,
+            name: selectedSymbol.name,
+            group
+          }
+        });
+        addingGroups = {
+          ...addingGroups,
+          [group]: false
+        };
+        activeSymbolGroup = '';
+        symbolSearchQuery = '';
+        symbolSearchResults = [];
+        selectedSymbol = undefined;
+        symbolSearchError = '';
+        persistViewState();
+        if (latestSnapshot) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+        }
+      } else if (action === 'renameGroup') {
+        const oldName = button.dataset.group || '';
+        const section = button.closest('section');
+        const input = section ? section.querySelector('input[data-group-name]') : undefined;
+        const newName = input ? input.value.trim() : '';
+        if (newName) {
+          vscode.postMessage({
+            command: 'renameGroup',
+            oldName,
+            newName
+          });
         }
       } else if (action === 'toggleGroup') {
         const group = button.dataset.group || '';
@@ -1010,6 +1283,79 @@ class QuotesViewProvider {
         }
       }
     });
+    app.addEventListener('pointerdown', (event) => {
+      const handle = event.target.closest('.column-resizer');
+      if (!handle) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const cell = handle.closest('.quote-cell');
+      if (!cell) {
+        return;
+      }
+
+      resizingColumn = {
+        column: handle.dataset.column,
+        startX: event.clientX,
+        startWidth: cell.getBoundingClientRect().width
+      };
+      document.body.classList.add('resizing-columns');
+    });
+    window.addEventListener('pointermove', (event) => {
+      if (!resizingColumn) {
+        return;
+      }
+
+      const width = Math.max(20, Math.round(resizingColumn.startWidth + event.clientX - resizingColumn.startX));
+      columnWidths = {
+        ...columnWidths,
+        [resizingColumn.column]: width
+      };
+      applyColumnWidths();
+    });
+    window.addEventListener('pointerup', () => {
+      if (!resizingColumn) {
+        return;
+      }
+
+      resizingColumn = undefined;
+      document.body.classList.remove('resizing-columns');
+      persistViewState();
+    });
+    app.addEventListener('input', (event) => {
+      const input = event.target.closest('input[data-symbol-query]');
+      if (!input) {
+        return;
+      }
+
+      activeSymbolGroup = input.dataset.group || '';
+      symbolSearchQuery = input.value.trim();
+      selectedSymbol = undefined;
+      symbolSearchError = '';
+      window.clearTimeout(symbolSearchTimer);
+
+      if (!symbolSearchQuery) {
+        activeSymbolSearchRequestId = ++symbolSearchRequestId;
+        symbolSearchResults = [];
+        symbolSearchLoading = false;
+        renderActiveSymbolResults();
+        return;
+      }
+
+      symbolSearchLoading = true;
+      renderActiveSymbolResults();
+      const requestId = ++symbolSearchRequestId;
+      activeSymbolSearchRequestId = requestId;
+      symbolSearchTimer = window.setTimeout(() => {
+        vscode.postMessage({
+          command: 'searchSymbols',
+          requestId,
+          query: symbolSearchQuery
+        });
+      }, 260);
+    });
     app.addEventListener('change', (event) => {
       const input = event.target.closest('input[data-field]');
       if (!input) {
@@ -1023,6 +1369,37 @@ class QuotesViewProvider {
         value: input.value.trim()
       });
     });
+    app.addEventListener('keydown', (event) => {
+      const searchInput = event.target.closest('input[data-symbol-query]');
+      if (searchInput && event.key === 'Enter') {
+        event.preventDefault();
+        const group = searchInput.dataset.group || activeSymbolGroup || defaultGroupName;
+        const button = Array.from(app.querySelectorAll('button[data-action="confirmAddSymbol"]')).find((item) => item.dataset.group === group);
+        if (button && !button.disabled) {
+          button.click();
+        }
+        return;
+      }
+
+      const groupNameInput = event.target.closest('input[data-group-name]');
+      if (groupNameInput && event.key === 'Enter') {
+        event.preventDefault();
+        const section = groupNameInput.closest('section');
+        const button = section ? section.querySelector('button[data-action="renameGroup"]') : undefined;
+        if (button) {
+          button.click();
+        }
+        return;
+      }
+
+      const input = event.target.closest('input[data-field]');
+      if (!input || event.key !== 'Enter') {
+        return;
+      }
+
+      event.preventDefault();
+      input.blur();
+    });
     indexSelect.addEventListener('change', () => {
       selectedIndexCode = indexSelect.value || 'sh000001';
       persistViewState();
@@ -1033,8 +1410,71 @@ class QuotesViewProvider {
     window.addEventListener('message', (event) => {
       if (event.data && event.data.type === 'snapshot') {
         render(event.data.snapshot);
+      } else if (event.data && event.data.type === 'symbolSearchResults') {
+        if (event.data.requestId !== activeSymbolSearchRequestId) {
+          return;
+        }
+
+        symbolSearchLoading = false;
+        symbolSearchResults = Array.isArray(event.data.results) ? event.data.results : [];
+        symbolSearchError = event.data.error || '';
+        renderActiveSymbolResults();
       }
     });
+
+    function renderActiveSymbolResults() {
+      const container = Array.from(app.querySelectorAll('[data-symbol-results-group]')).find((item) => item.dataset.symbolResultsGroup === activeSymbolGroup);
+      const addButton = Array.from(app.querySelectorAll('button[data-action="confirmAddSymbol"]')).find((item) => item.dataset.group === activeSymbolGroup);
+      const queryInput = Array.from(app.querySelectorAll('input[data-symbol-query]')).find((item) => item.dataset.group === activeSymbolGroup);
+      if (queryInput && queryInput.value !== symbolSearchQuery) {
+        queryInput.value = symbolSearchQuery;
+      }
+      if (addButton) {
+        addButton.disabled = !selectedSymbol;
+      }
+      if (!container) {
+        return;
+      }
+      if (!symbolSearchQuery) {
+        container.innerHTML = '';
+        return;
+      }
+
+      if (symbolSearchLoading) {
+        container.innerHTML = '<div class="symbol-result-empty">搜索中...</div>';
+        return;
+      }
+
+      if (symbolSearchError) {
+        container.innerHTML = '<div class="symbol-result-empty">' + escapeHtml(symbolSearchError) + '</div>';
+        return;
+      }
+
+      if (symbolSearchResults.length === 0) {
+        container.innerHTML = '<div class="symbol-result-empty">没有找到匹配标的</div>';
+        return;
+      }
+
+      container.innerHTML = symbolSearchResults.map((item) => {
+        const selected = selectedSymbol && selectedSymbol.code === item.code;
+        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="选择 ' + escapeHtml(item.name) + '">' +
+          '<span class="symbol-result-main">' + escapeHtml(item.name) + '</span>' +
+          '<span class="symbol-result-code">' + escapeHtml(item.market || '') + ' ' + escapeHtml(item.code) + '</span>' +
+        '</button>';
+      }).join('');
+    }
+
+    function applyColumnWidths() {
+      for (const row of app.querySelectorAll('.quote[data-columns]')) {
+        const columns = row.dataset.columns.split(',');
+        const template = getGridTemplate(columns, row.classList.contains('editing'));
+        if (template) {
+          row.style.gridTemplateColumns = template;
+        } else {
+          row.style.removeProperty('grid-template-columns');
+        }
+      }
+    }
 
     function render(snapshot) {
       latestSnapshot = snapshot;
@@ -1053,11 +1493,13 @@ class QuotesViewProvider {
 
       if (snapshot.error) {
         app.innerHTML = '<div class="error">' + escapeHtml(snapshot.error) + '</div>' + renderGroups(snapshot.groups, snapshot);
+        applyColumnWidths();
         renderIndex(snapshot);
         return;
       }
 
       app.innerHTML = renderGroups(snapshot.groups, snapshot);
+      applyColumnWidths();
       renderIndex(snapshot);
     }
 
@@ -1093,15 +1535,18 @@ class QuotesViewProvider {
       return groups.map((group) => {
         const editing = Boolean(editingGroups[group.name]);
         const collapsed = Boolean(collapsedGroups[group.name]);
-        const columns = snapshot.quoteColumns || ['identity', 'price', 'changePercent'];
+        const columns = snapshot.quoteColumns || ['name', 'price', 'changePercent'];
         const sort = tableSort[group.name];
+        const adding = Boolean(addingGroups[group.name]);
         const sortedItems = sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
-        const items = collapsed ? '' : sortedItems.map((quote) => renderQuote(quote, snapshot, editing, columns, gridClass)).join('');
+        const items = collapsed ? '' : sortedItems.map((quote) => renderQuote(quote, snapshot, editing, columns, gridClass, snapshot.loading)).join('');
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + '</div>';
+        const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
         const average = stats.averageChangePercent === null ? '--' : formatSigned(stats.averageChangePercent, 2) + '%';
+        const flatStat = stats.flat > 0 ? '<span class="flat">=' + stats.flat + '</span>' : '';
         return '<section class="group' + (editing ? ' editing' : '') + '">' +
           '<div class="group-title">' +
             '<span class="group-title-main">' +
@@ -1112,60 +1557,114 @@ class QuotesViewProvider {
               '<span class="group-stats">' +
                 '<span class="up">↑' + stats.up + '</span>' +
                 '<span class="down">↓' + stats.down + '</span>' +
-                '<span class="flat">- ' + stats.flat + '</span>' +
+                flatStat +
                 '<span title="平均涨跌幅">' + average + '</span>' +
                 '<span class="count">' + group.items.length + '</span>' +
               '</span>' +
-              '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(group.name) + '" title="' + (editing ? '完成' : '编辑') + '">' + (editing ? '✓' : '✎') + '</button>' +
             '</span>' +
           '</div>' +
           table +
+          footer +
           '</section>';
       }).join('');
     }
 
+    function renderGroupFooter(groupName, editing, adding) {
+      return '<div class="group-footer">' +
+        (adding ? renderGroupSymbolSearch(groupName) : '') +
+        (editing ? '<div class="group-rename-row">' +
+          '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="分组名称">' +
+          '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="保存分组名称" aria-label="保存分组名称">✓</button>' +
+        '</div>' : '') +
+        '<div class="group-footer-actions">' +
+          '<button class="secondary icon-button" data-action="addToGroup" data-group="' + escapeHtml(groupName) + '" title="' + (adding ? '收起添加' : '添加标的') + '" aria-label="' + (adding ? '收起添加' : '添加标的') + '">' + (adding ? '−' : '＋') + '</button>' +
+          '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? '完成修改' : '修改分组') + '" aria-label="' + (editing ? '完成修改' : '修改分组') + '">' + (editing ? '✓' : '✎') + '</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function renderGroupSymbolSearch(groupName) {
+      const isActive = activeSymbolGroup === groupName;
+      const query = isActive ? symbolSearchQuery : '';
+      return '<div class="symbol-form group-symbol-form">' +
+        '<div class="symbol-search-row">' +
+          '<input data-symbol-query="true" data-group="' + escapeHtml(groupName) + '" value="' + escapeHtml(query) + '" placeholder="搜索名称、代码或拼音" autocomplete="off">' +
+          '<button class="secondary icon-button add-button" data-action="confirmAddSymbol" data-group="' + escapeHtml(groupName) + '" title="添加到该分组" aria-label="添加到该分组" ' + (isActive && selectedSymbol ? '' : 'disabled') + '>＋</button>' +
+        '</div>' +
+        '<div class="symbol-results" data-symbol-results-group="' + escapeHtml(groupName) + '">' + (isActive ? renderSymbolResultsHtml() : '') + '</div>' +
+      '</div>';
+    }
+
+    function renderSymbolResultsHtml() {
+      if (!symbolSearchQuery) {
+        return '';
+      }
+      if (symbolSearchLoading) {
+        return '<div class="symbol-result-empty">搜索中...</div>';
+      }
+      if (symbolSearchError) {
+        return '<div class="symbol-result-empty">' + escapeHtml(symbolSearchError) + '</div>';
+      }
+      if (symbolSearchResults.length === 0) {
+        return '<div class="symbol-result-empty">没有找到匹配标的</div>';
+      }
+      return symbolSearchResults.map((item) => {
+        const selected = selectedSymbol && selectedSymbol.code === item.code;
+        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="选择 ' + escapeHtml(item.name) + '">' +
+          '<span class="symbol-result-main">' + escapeHtml(item.name) + '</span>' +
+          '<span class="symbol-result-code">' + escapeHtml(item.market || '') + ' ' + escapeHtml(item.code) + '</span>' +
+        '</button>';
+      }).join('');
+    }
+
     function renderQuoteHeader(groupName, columns, editing, gridClass, sort) {
-      return '<div class="quote quote-header ' + gridClass + (editing ? ' editing' : '') + '">' +
+      return '<div class="quote quote-header ' + gridClass + (editing ? ' editing' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         columns.map((column) => {
           const active = sort && sort.column === column;
           const icon = active ? sort.direction === 'asc' ? ' ↑' : ' ↓' : '';
           return '<div class="quote-cell ' + getColumnClass(column) + '">' +
             '<button class="sort-button" data-action="sortColumn" data-group="' + escapeHtml(groupName) + '" data-column="' + column + '" title="按' + escapeHtml(getColumnLabel(column)) + '排序">' + escapeHtml(getColumnLabel(column)) + icon + '</button>' +
+            '<span class="column-resizer" data-column="' + escapeHtml(column) + '" title="拖动调整列宽"></span>' +
           '</div>';
         }).join('') +
         (editing ? '<div class="quote-cell numeric">操作</div>' : '') +
       '</div>';
     }
 
-    function renderQuote(quote, snapshot, editing, columns, gridClass) {
+    function renderQuote(quote, snapshot, editing, columns, gridClass, loading) {
       const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
       const index = Number(quote.index);
       const first = index <= 0;
       const last = index >= snapshot.symbolCount - 1;
-      const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend)).join('');
+      const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend, editing)).join('');
 
-      return '<article class="quote ' + gridClass + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + '">' +
+      return '<article class="quote ' + gridClass + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         cells +
         (editing ? '<div class="quote-actions">' +
           '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="上移" ' + (first ? 'disabled' : '') + '>↑</button>' +
           '<button class="secondary icon-button" data-action="down" data-index="' + index + '" title="下移" ' + (last ? 'disabled' : '') + '>↓</button>' +
-          '<button class="secondary icon-button" data-action="remove" data-index="' + index + '" title="删除">×</button>' +
+          '<button class="secondary icon-button danger" data-action="remove" data-index="' + index + '" data-name="' + escapeHtml(quote.name) + '" title="删除标的" aria-label="删除标的">×</button>' +
         '</div>' : '') +
       '</article>';
     }
 
-    function renderQuoteCell(column, quote, snapshot, trend) {
+    function renderQuoteCell(column, quote, snapshot, trend, editing) {
       const digits = snapshot.priceDecimalPlaces;
       const cellClass = 'quote-cell ' + getColumnClass(column);
-      if (column === 'identity') {
+      if (column === 'name') {
+        if (editing) {
+          return '<div class="' + cellClass + '">' + renderEditableText(quote, 'name') + '</div>';
+        }
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
         return '<div class="' + cellClass + '">' +
           '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">预警</span>' : '') + '</div>' +
-          '<div class="code">' + escapeHtml(quote.code) + '</div>' +
         '</div>';
+      }
+      if (column === 'code') {
+        return '<div class="' + cellClass + ' code">' + escapeHtml(quote.code) + '</div>';
       }
       if (column === 'price') {
         return '<div class="' + cellClass + ' price">' + (quote.price === null ? '--' : formatDecimal(quote.price, digits)) + '</div>';
@@ -1196,6 +1695,20 @@ class QuotesViewProvider {
       return '<input class="cell-input" type="number" step="any" inputmode="decimal" data-field="' + field + '" data-index="' + quote.index + '" value="' + escapeHtml(displayValue) + '" placeholder="--" title="' + getColumnLabel(field) + '">';
     }
 
+    function renderEditableText(quote, field) {
+      const value = quote[field] === null || quote[field] === undefined ? '' : String(quote[field]);
+      return '<input class="cell-input text-input" type="text" data-field="' + field + '" data-index="' + quote.index + '" value="' + escapeHtml(value) + '" placeholder="' + escapeHtml(quote.code) + '" title="' + getColumnLabel(field) + '">';
+    }
+
+    function focusGroupSearch(groupName) {
+      window.setTimeout(() => {
+        const input = Array.from(app.querySelectorAll('input[data-symbol-query]')).find((item) => item.dataset.group === groupName);
+        if (input) {
+          input.focus();
+        }
+      }, 0);
+    }
+
     function calculateNetProfit(quote) {
       if (quote.price === null || quote.cost === null || quote.cost === undefined || quote.holding === null || quote.holding === undefined) {
         return null;
@@ -1204,12 +1717,35 @@ class QuotesViewProvider {
     }
 
     function getQuoteGridClass(columns) {
-      return 'cols-' + Math.max(1, Math.min(7, columns.length));
+      return 'cols-' + Math.max(1, Math.min(8, columns.length));
+    }
+
+    function getGridTemplate(columns, editing) {
+      const hasCustomWidth = columns.some((column) => {
+        const width = Number(columnWidths[column]);
+        return Number.isFinite(width) && width > 0;
+      });
+      if (!hasCustomWidth) {
+        return '';
+      }
+
+      const template = columns.map((column, index) => {
+        const width = Number(columnWidths[column]);
+        if (Number.isFinite(width) && width > 0) {
+          return width + 'px';
+        }
+        return 'minmax(20px, 1fr)';
+      });
+      if (editing) {
+        template.push('max-content');
+      }
+      return template.join(' ');
     }
 
     function getColumnLabel(column) {
       return {
-        identity: '名称/代码',
+        name: '名称',
+        code: '代码',
         price: '价格',
         changePercent: '涨跌幅',
         change: '涨跌额',
@@ -1220,7 +1756,7 @@ class QuotesViewProvider {
     }
 
     function getColumnClass(column) {
-      return column === 'identity' ? '' : 'numeric';
+      return column === 'name' || column === 'code' ? '' : 'numeric';
     }
 
     function sortQuotesForColumn(items, column, direction) {
@@ -1235,8 +1771,11 @@ class QuotesViewProvider {
     }
 
     function compareColumnValue(left, right, column) {
-      if (column === 'identity') {
+      if (column === 'name') {
         return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      }
+      if (column === 'code') {
+        return String(left.code || '').localeCompare(String(right.code || ''));
       }
 
       const leftValue = getColumnSortValue(left, column);
@@ -1285,7 +1824,9 @@ class QuotesViewProvider {
         selectedIndexCode,
         editingGroups,
         collapsedGroups,
-        tableSort
+        addingGroups,
+        tableSort,
+        columnWidths
       };
       vscode.setState(viewState);
     }
@@ -1324,11 +1865,13 @@ function readConfig() {
     .map(normalizeSymbolConfig)
     .filter(Boolean)
     .filter((symbol) => !isBuiltInIndexCode(symbol.code));
+  const groups = normalizeGroups(config.get('groups', [DEFAULT_GROUP]), symbols);
   const alerts = config.get('alerts', [])
     .map(normalizeAlertRule)
     .filter(Boolean);
 
   return {
+    groups,
     symbols,
     alerts,
     enableAlerts: config.get('enableAlerts', true),
@@ -1339,20 +1882,52 @@ function readConfig() {
     sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
-    quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', ['identity', 'price', 'changePercent'])),
+    quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', ['name', 'price', 'changePercent'])),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
 }
 
+function normalizeGroups(value, symbols = []) {
+  const groups = [];
+  const addGroup = (name) => {
+    const normalized = normalizeGroupName(name);
+    if (normalized && !groups.includes(normalized)) {
+      groups.push(normalized);
+    }
+  };
+
+  if (Array.isArray(value)) {
+    value.forEach(addGroup);
+  }
+
+  symbols.forEach((symbol) => addGroup(symbol.group));
+  if (groups.length === 0) {
+    addGroup(DEFAULT_GROUP);
+  }
+  return groups;
+}
+
+function normalizeGroupName(value) {
+  return String(value || '').trim();
+}
+
 async function updateConfiguredSymbols(symbols) {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  const inspect = config.inspect('symbols');
-  const target = inspect && inspect.workspaceValue !== undefined
+  await config.update('symbols', symbols.map(toConfigSymbol), getConfigTarget(config, 'symbols'));
+}
+
+async function updateConfiguredGroups(groups) {
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  const normalizedGroups = normalizeGroups(groups, []);
+  await config.update('groups', normalizedGroups, getConfigTarget(config, 'groups'));
+}
+
+function getConfigTarget(config, key) {
+  const inspect = config.inspect(key);
+  return inspect && inspect.workspaceValue !== undefined
     ? vscode.ConfigurationTarget.Workspace
     : vscode.ConfigurationTarget.Global;
-
-  await config.update('symbols', symbols.map(toConfigSymbol), target);
 }
 
 function toConfigSymbol(symbol) {
@@ -1549,6 +2124,61 @@ async function fetchRawQuotes(codes, timeoutMs) {
   throw new Error(`行情请求失败：${errors.join('；')}`);
 }
 
+async function fetchSymbolSearchResults(keyword, timeoutMs) {
+  const normalizedKeyword = String(keyword || '').trim();
+  if (!normalizedKeyword) {
+    return [];
+  }
+
+  const url = `http://suggest3.sinajs.cn/suggest/type=&key=${encodeURIComponent(normalizedKeyword)}`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs, 3000), 10000), {
+    Referer: 'https://finance.sina.com.cn/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  }, 'gb18030');
+  const results = parseSinaSuggestResponse(body);
+
+  if (results.length === 0) {
+    const code = normalizeCode(normalizedKeyword);
+    return code ? [{ code, name: code, market: getCodeMarketLabel(code) }] : [];
+  }
+
+  return results;
+}
+
+function parseSinaSuggestResponse(body) {
+  const match = String(body || '').match(/suggestvalue="([\s\S]*)";?\s*$/);
+  const payload = match ? match[1] : '';
+  const seen = new Set();
+  const results = [];
+
+  for (const row of payload.split(';')) {
+    const fields = row.split(',');
+    const code = normalizeCode(fields[3] || fields[0] || fields[2] || '');
+    if (!code || seen.has(code)) {
+      continue;
+    }
+
+    const name = String(fields[4] || fields[6] || fields[0] || code).trim() || code;
+    seen.add(code);
+    results.push({
+      code,
+      name,
+      market: getCodeMarketLabel(code)
+    });
+
+    if (results.length >= 12) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+function getCodeMarketLabel(code) {
+  const prefix = String(code || '').slice(0, 2).toUpperCase();
+  return prefix || '';
+}
+
 function isUsableQuote(quote) {
   return Boolean(quote && quote.price !== null);
 }
@@ -1600,7 +2230,7 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
   });
 }
 
-function requestText(url, timeoutMs, headers = {}) {
+function requestText(url, timeoutMs, headers = {}, encoding = 'utf8') {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('http:') ? http : https;
     const request = client.get(url, { headers }, (response) => {
@@ -1612,7 +2242,7 @@ function requestText(url, timeoutMs, headers = {}) {
 
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
-      response.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      response.on('end', () => resolve(decodeResponseText(Buffer.concat(chunks), encoding)));
     });
 
     request.on('error', reject);
@@ -1620,6 +2250,18 @@ function requestText(url, timeoutMs, headers = {}) {
       request.destroy(new Error('行情请求超时'));
     });
   });
+}
+
+function decodeResponseText(buffer, encoding) {
+  if (!encoding || encoding.toLowerCase() === 'utf8' || encoding.toLowerCase() === 'utf-8') {
+    return buffer.toString('utf8');
+  }
+
+  try {
+    return new TextDecoder(encoding).decode(buffer);
+  } catch (error) {
+    return buffer.toString('utf8');
+  }
 }
 
 function parseSinaResponse(body) {
@@ -1752,11 +2394,18 @@ function buildIndexQuotes(quotes) {
   });
 }
 
-function groupQuotes(quotes, configuredSymbols, alerts, sortBy, sortDirection) {
+function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy, sortDirection) {
   const order = [];
   const groups = new Map();
   const quoteByCodeAndName = new Map(quotes.map((quote) => [`${quote.code}\n${quote.name}\n${quote.group}`, quote]));
   const alertsByCode = groupAlertsByCode(alerts);
+
+  for (const groupName of configuredGroups) {
+    if (!groups.has(groupName)) {
+      groups.set(groupName, []);
+      order.push(groupName);
+    }
+  }
 
   for (const [index, symbol] of configuredSymbols.entries()) {
     const key = symbol.group || DEFAULT_GROUP;
@@ -1989,13 +2638,14 @@ function sanitizeDecimalPlaces(value) {
 }
 
 function sanitizeQuoteColumns(value) {
-  const allowed = new Set(['identity', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
-  const defaults = ['identity', 'price', 'changePercent'];
+  const allowed = new Set(['name', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
+  const defaults = ['name', 'price', 'changePercent'];
   if (!Array.isArray(value)) {
     return defaults;
   }
 
-  const columns = value.filter((column, index) => allowed.has(column) && value.indexOf(column) === index);
+  const normalized = value.map((column) => column === 'identity' ? 'name' : column);
+  const columns = normalized.filter((column, index) => allowed.has(column) && normalized.indexOf(column) === index);
   return columns.length > 0 ? columns : defaults;
 }
 
