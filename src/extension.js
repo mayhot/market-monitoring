@@ -138,8 +138,12 @@ class MarketMonitor {
       return;
     }
 
-    await updateConfiguredSymbols([...this.config.symbols, normalized]);
+    const insertIndex = findGroupInsertIndex(this.config.symbols, normalized.group);
+    const nextSymbols = [...this.config.symbols];
+    nextSymbols.splice(insertIndex, 0, normalized);
+    await updateConfiguredSymbols(nextSymbols);
     vscode.window.showInformationMessage(`已添加 ${normalized.name}`);
+    this.refresh(true);
   }
 
   async searchSymbols(query, requestId) {
@@ -223,15 +227,25 @@ class MarketMonitor {
   async moveSymbol(index, direction) {
     const parsedIndex = Number(index);
     const offset = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
-    const nextIndex = parsedIndex + offset;
 
-    if (!Number.isInteger(parsedIndex) || offset === 0 || parsedIndex < 0 || nextIndex < 0 || parsedIndex >= this.config.symbols.length || nextIndex >= this.config.symbols.length) {
+    if (!Number.isInteger(parsedIndex) || offset === 0 || parsedIndex < 0 || parsedIndex >= this.config.symbols.length) {
       return;
     }
 
+    const symbol = this.config.symbols[parsedIndex];
+    const groupIndexes = this.config.symbols
+      .map((item, currentIndex) => item.group === symbol.group ? currentIndex : -1)
+      .filter((currentIndex) => currentIndex >= 0);
+    const groupPosition = groupIndexes.indexOf(parsedIndex);
+    const nextGroupPosition = groupPosition + offset;
+
+    if (groupPosition < 0 || nextGroupPosition < 0 || nextGroupPosition >= groupIndexes.length) {
+      return;
+    }
+
+    const nextIndex = groupIndexes[nextGroupPosition];
     const nextSymbols = [...this.config.symbols];
-    const [symbol] = nextSymbols.splice(parsedIndex, 1);
-    nextSymbols.splice(nextIndex, 0, symbol);
+    [nextSymbols[parsedIndex], nextSymbols[nextIndex]] = [nextSymbols[nextIndex], nextSymbols[parsedIndex]];
     await updateConfiguredSymbols(nextSymbols);
   }
 
@@ -243,7 +257,9 @@ class MarketMonitor {
 
     const parsedValue = field === 'name'
       ? String(value || '').trim()
-      : optionalNumber(value);
+      : field === 'holding'
+        ? optionalInteger(value)
+        : optionalNumber(value);
     const nextSymbols = this.config.symbols.map((symbol, currentIndex) => {
       if (currentIndex !== parsedIndex) {
         return symbol;
@@ -873,6 +889,23 @@ class QuotesViewProvider {
       background: color-mix(in srgb, var(--surface-soft) 42%, transparent);
     }
 
+    .group-summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 8px;
+      border-top: 1px solid var(--border);
+      color: var(--vscode-foreground);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .group-summary > span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .sort-button {
       width: 100%;
       min-height: 0;
@@ -1008,6 +1041,22 @@ class QuotesViewProvider {
       max-width: none;
       text-align: left;
       font-variant-numeric: normal;
+    }
+
+    .cell-input[type="number"] {
+      appearance: textfield;
+      -moz-appearance: textfield;
+    }
+
+    .cell-input[type="number"]::-webkit-outer-spin-button,
+    .cell-input[type="number"]::-webkit-inner-spin-button {
+      appearance: none;
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .cell-input[data-field="holding"] {
+      ime-mode: disabled;
     }
 
     .index-dock {
@@ -1169,13 +1218,18 @@ class QuotesViewProvider {
         vscode.postMessage({ command: 'moveSymbol', index, direction: action });
       } else if (action === 'editGroup') {
         const group = button.dataset.group || '';
+        const nextEditing = !editingGroups[group];
         editingGroups = {
           ...editingGroups,
-          [group]: !editingGroups[group]
+          [group]: nextEditing
         };
         persistViewState();
+        if (!nextEditing && document.activeElement && typeof document.activeElement.blur === 'function') {
+          document.activeElement.blur();
+        }
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          applyColumnWidths();
         }
       } else if (action === 'addToGroup') {
         const group = button.dataset.group || '';
@@ -1235,6 +1289,7 @@ class QuotesViewProvider {
         persistViewState();
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          applyColumnWidths();
         }
       } else if (action === 'renameGroup') {
         const oldName = button.dataset.group || '';
@@ -1491,6 +1546,11 @@ class QuotesViewProvider {
         ? ''
         : '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。';
 
+      if (shouldFreezeQuoteRender()) {
+        renderIndex(snapshot);
+        return;
+      }
+
       if (snapshot.error) {
         app.innerHTML = '<div class="error">' + escapeHtml(snapshot.error) + '</div>' + renderGroups(snapshot.groups, snapshot);
         applyColumnWidths();
@@ -1501,6 +1561,14 @@ class QuotesViewProvider {
       app.innerHTML = renderGroups(snapshot.groups, snapshot);
       applyColumnWidths();
       renderIndex(snapshot);
+    }
+
+    function shouldFreezeQuoteRender() {
+      const activeElement = document.activeElement;
+      return app.innerHTML.trim() !== ''
+        && activeElement
+        && app.contains(activeElement)
+        && Boolean(activeElement.closest('input[data-field], input[data-group-name], input[data-symbol-query], .group-symbol-form'));
     }
 
     function renderIndex(snapshot) {
@@ -1538,14 +1606,16 @@ class QuotesViewProvider {
         const columns = snapshot.quoteColumns || ['name', 'price', 'changePercent'];
         const sort = tableSort[group.name];
         const adding = Boolean(addingGroups[group.name]);
-        const sortedItems = sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
+        const sortedItems = editing ? group.items : sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
-        const items = collapsed ? '' : sortedItems.map((quote) => renderQuote(quote, snapshot, editing, columns, gridClass, snapshot.loading)).join('');
-        const table = collapsed ? '' : '<div class="quote-table">' + header + items + '</div>';
+        const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, snapshot.loading, itemIndex, sortedItems.length)).join('');
+        const summary = collapsed ? '' : renderGroupSummary(group.items);
+        const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
-        const average = stats.averageChangePercent === null ? '--' : formatSigned(stats.averageChangePercent, 2) + '%';
+        const upStat = stats.up > 0 ? '<span class="up">↑' + stats.up + '</span>' : '';
+        const downStat = stats.down > 0 ? '<span class="down">↓' + stats.down + '</span>' : '';
         const flatStat = stats.flat > 0 ? '<span class="flat">=' + stats.flat + '</span>' : '';
         return '<section class="group' + (editing ? ' editing' : '') + '">' +
           '<div class="group-title">' +
@@ -1555,11 +1625,9 @@ class QuotesViewProvider {
             '</span>' +
             '<span class="group-title-actions">' +
               '<span class="group-stats">' +
-                '<span class="up">↑' + stats.up + '</span>' +
-                '<span class="down">↓' + stats.down + '</span>' +
+                upStat +
+                downStat +
                 flatStat +
-                '<span title="平均涨跌幅">' + average + '</span>' +
-                '<span class="count">' + group.items.length + '</span>' +
               '</span>' +
             '</span>' +
           '</div>' +
@@ -1567,6 +1635,82 @@ class QuotesViewProvider {
           footer +
           '</section>';
       }).join('');
+    }
+
+    function renderGroupSummary(items) {
+      const summary = calculateGroupPortfolioSummary(items);
+      const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets);
+      const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
+      const profitText = summary.dailyProfit === null
+        ? ''
+        : formatSignedLargeAmount(summary.dailyProfit) + (summary.dailyProfitPercent === null ? '' : ' ' + formatSigned(summary.dailyProfitPercent, 2) + '%');
+
+      return '<div class="group-summary">' +
+        '<span title="当前总资产">' + assets + '</span>' +
+        '<span class="quote-change ' + profitTrend + '" title="按涨跌额 * 持仓汇总">' + escapeHtml(profitText) + '</span>' +
+      '</div>';
+    }
+
+    function calculateGroupPortfolioSummary(items) {
+      let totalAssets = 0;
+      let dailyProfit = 0;
+      let previousAssets = 0;
+      let assetCount = 0;
+      let profitCount = 0;
+
+      for (const item of items) {
+        if (item.cost === null || item.cost === undefined || item.holding === null || item.holding === undefined || item.price === null || item.price === undefined) {
+          continue;
+        }
+
+        const holding = Number(item.holding);
+        if (!Number.isFinite(holding) || holding <= 0) {
+          continue;
+        }
+
+        totalAssets += item.price * holding;
+        assetCount += 1;
+
+        if (item.change !== null && item.change !== undefined) {
+          dailyProfit += item.change * holding;
+          profitCount += 1;
+        }
+        if (item.previousClose !== null && item.previousClose !== undefined) {
+          previousAssets += item.previousClose * holding;
+        }
+      }
+
+      return {
+        totalAssets: assetCount > 0 ? totalAssets : null,
+        dailyProfit: profitCount > 0 ? dailyProfit : null,
+        dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
+      };
+    }
+
+    function formatLargeAmount(value) {
+      const amount = Number(value);
+      if (!Number.isFinite(amount)) {
+        return '--';
+      }
+      if (Math.abs(amount) > 10000) {
+        return (amount / 10000).toFixed(2) + 'W';
+      }
+      return formatDecimal(amount, 2);
+    }
+
+    function formatSignedLargeAmount(value) {
+      const amount = Number(value);
+      if (!Number.isFinite(amount)) {
+        return '--';
+      }
+      const formatted = formatLargeAmount(Math.abs(amount));
+      if (amount > 0) {
+        return '+' + formatted;
+      }
+      if (amount < 0) {
+        return '-' + formatted;
+      }
+      return formatted;
     }
 
     function renderGroupFooter(groupName, editing, adding) {
@@ -1631,13 +1775,13 @@ class QuotesViewProvider {
       '</div>';
     }
 
-    function renderQuote(quote, snapshot, editing, columns, gridClass, loading) {
+    function renderQuote(quote, snapshot, editing, columns, gridClass, loading, itemIndex, itemCount) {
       const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
       const index = Number(quote.index);
-      const first = index <= 0;
-      const last = index >= snapshot.symbolCount - 1;
+      const first = itemIndex <= 0;
+      const last = itemIndex >= itemCount - 1;
       const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend, editing)).join('');
 
       return '<article class="quote ' + gridClass + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
@@ -1676,10 +1820,10 @@ class QuotesViewProvider {
         return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (quote.change === null ? '--' : formatSignedDecimal(quote.change, digits)) + '</div>';
       }
       if (column === 'cost') {
-        return '<div class="' + cellClass + '">' + renderEditableNumber(quote, 'cost', digits) + '</div>';
+        return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'cost', 3) : renderReadonlyNumber(quote.cost, 3)) + '</div>';
       }
       if (column === 'holding') {
-        return '<div class="' + cellClass + '">' + renderEditableNumber(quote, 'holding', 0) + '</div>';
+        return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'holding', 0, '1') : renderReadonlyNumber(quote.holding, 0)) + '</div>';
       }
       if (column === 'netProfit') {
         const profit = calculateNetProfit(quote);
@@ -1689,10 +1833,14 @@ class QuotesViewProvider {
       return '<div class="' + cellClass + '">--</div>';
     }
 
-    function renderEditableNumber(quote, field, digits) {
+    function renderEditableNumber(quote, field, digits, step = 'any') {
       const value = quote[field];
       const displayValue = value === null || value === undefined ? '' : formatDecimal(value, digits);
-      return '<input class="cell-input" type="number" step="any" inputmode="decimal" data-field="' + field + '" data-index="' + quote.index + '" value="' + escapeHtml(displayValue) + '" placeholder="--" title="' + getColumnLabel(field) + '">';
+      return '<input class="cell-input" type="number" step="' + escapeHtml(step) + '" inputmode="' + (step === '1' ? 'numeric' : 'decimal') + '" data-field="' + field + '" data-index="' + quote.index + '" value="' + escapeHtml(displayValue) + '" placeholder="--" title="' + getColumnLabel(field) + '">';
+    }
+
+    function renderReadonlyNumber(value, digits) {
+      return value === null || value === undefined ? '--' : formatDecimal(value, digits);
     }
 
     function renderEditableText(quote, field) {
@@ -1966,6 +2114,20 @@ function normalizeSymbolConfig(item) {
   };
 }
 
+function findGroupInsertIndex(symbols, groupName) {
+  const normalizedGroupName = normalizeGroupName(groupName) || DEFAULT_GROUP;
+  let insertIndex = symbols.length;
+
+  for (let index = symbols.length - 1; index >= 0; index -= 1) {
+    if (symbols[index].group === normalizedGroupName) {
+      insertIndex = index + 1;
+      break;
+    }
+  }
+
+  return insertIndex;
+}
+
 function normalizeAlertRule(item) {
   if (!item || typeof item !== 'object' || !item.code) {
     return undefined;
@@ -2037,6 +2199,18 @@ function optionalNumber(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function optionalInteger(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.trunc(parsed);
 }
 
 async function fetchQuotes(symbols, timeoutMs) {
