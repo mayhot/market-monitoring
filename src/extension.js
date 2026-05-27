@@ -1,5 +1,7 @@
 const http = require('http');
 const https = require('https');
+const os = require('os');
+const path = require('path');
 const vscode = require('vscode');
 
 const CONFIG_SECTION = 'marketMonitoring';
@@ -24,6 +26,8 @@ function activate(context) {
     output,
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.commands.registerCommand('marketMonitoring.refresh', () => monitor.refresh(true)),
+    vscode.commands.registerCommand('marketMonitoring.importCsv', () => monitor.importCsv()),
+    vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
     vscode.commands.registerCommand('marketMonitoring.stop', () => monitor.stop(true)),
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
@@ -43,6 +47,10 @@ function activate(context) {
 
     if (message.command === 'refresh') {
       monitor.refresh(true);
+    } else if (message.command === 'importCsv') {
+      monitor.importCsv();
+    } else if (message.command === 'exportCsv') {
+      monitor.exportCsv();
     } else if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
     } else if (message.command === 'start') {
@@ -272,6 +280,87 @@ class MarketMonitor {
     });
 
     await updateConfiguredSymbols(nextSymbols);
+  }
+
+  async importCsv() {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters: {
+        CSV: ['csv']
+      },
+      openLabel: '导入 CSV'
+    });
+    if (!uris || uris.length === 0) {
+      return;
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uris[0]);
+      const rows = parseCsvImportRows(decodeCsvImportText(bytes));
+      const importResult = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: '正在导入 CSV 标的',
+        cancellable: false
+      }, (progress) => resolveImportRows(rows, this.config, this.output, progress));
+
+      if (importResult.symbols.length === 0) {
+        vscode.window.showWarningMessage(`未导入标的：有效 ${importResult.validated} 条，跳过 ${importResult.skipped} 条`);
+        return;
+      }
+
+      let nextSymbols = [...this.config.symbols];
+      for (const symbol of importResult.symbols) {
+        const insertIndex = findGroupInsertIndex(nextSymbols, symbol.group);
+        nextSymbols.splice(insertIndex, 0, symbol);
+      }
+
+      const nextGroups = [...this.config.groups];
+      for (const group of importResult.groups) {
+        if (!nextGroups.includes(group)) {
+          nextGroups.push(group);
+        }
+      }
+
+      await updateConfiguredGroups(nextGroups);
+      await updateConfiguredSymbols(nextSymbols);
+      this.config = {
+        ...this.config,
+        groups: normalizeGroups(nextGroups, nextSymbols),
+        symbols: nextSymbols
+      };
+      vscode.window.showInformationMessage(`已导入 ${importResult.symbols.length} 个标的，跳过 ${importResult.skipped} 条`);
+      this.refresh(true);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.output.appendLine(`[${new Date().toISOString()}] CSV 导入失败: ${message}`);
+      vscode.window.showErrorMessage(`CSV 导入失败: ${message}`);
+    }
+  }
+
+  async exportCsv() {
+    const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, 'configured', 'asc');
+    const rows = buildCsvRows(groups, this.config.priceDecimalPlaces);
+    if (rows.length <= 1) {
+      vscode.window.showInformationMessage('暂无可导出的标的数据');
+      return;
+    }
+
+    const defaultUri = vscode.Uri.file(path.join(os.homedir(), `market-monitoring-${formatFileTimestamp(new Date())}.csv`));
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri,
+      filters: {
+        CSV: ['csv']
+      },
+      saveLabel: '导出 CSV'
+    });
+    if (!uri) {
+      return;
+    }
+
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(toCsv(rows), 'utf8'));
+    vscode.window.showInformationMessage(`已导出 CSV: ${uri.fsPath}`);
   }
 
   async refresh(force) {
@@ -1137,6 +1226,8 @@ class QuotesViewProvider {
     <div class="phase" id="phase">未启动</div>
     <button class="icon-button" id="toggle" title="启动" aria-label="启动">▶</button>
     <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新">↻</button>
+    <button class="secondary icon-button" id="import-csv" title="导入 CSV" aria-label="导入 CSV">⇧</button>
+    <button class="secondary icon-button" id="export-csv" title="导出 CSV" aria-label="导出 CSV">⇩</button>
     <button class="secondary icon-button" id="settings" title="设置" aria-label="设置">⚙</button>
   </div>
   <form class="group-form" id="group-form">
@@ -1159,6 +1250,8 @@ class QuotesViewProvider {
     const phase = document.getElementById('phase');
     const toggle = document.getElementById('toggle');
     const refresh = document.getElementById('refresh');
+    const importCsv = document.getElementById('import-csv');
+    const exportCsv = document.getElementById('export-csv');
     const settings = document.getElementById('settings');
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
@@ -1185,6 +1278,8 @@ class QuotesViewProvider {
     let latestSnapshot;
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
+    importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
+    exportCsv.addEventListener('click', () => vscode.postMessage({ command: 'exportCsv' }));
     settings.addEventListener('click', () => vscode.postMessage({ command: 'settings' }));
     toggle.addEventListener('click', () => {
       const running = toggle.dataset.running === 'true';
@@ -2610,6 +2705,483 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
     stats: calculateGroupStats(groups.get(name)),
     items: sortQuotes(groups.get(name), sortBy, sortDirection)
   }));
+}
+
+function decodeCsvImportText(bytes) {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (data.length >= 3 && data[0] === 0xEF && data[1] === 0xBB && data[2] === 0xBF) {
+    return new TextDecoder('utf-8').decode(data.slice(3));
+  }
+  if (data.length >= 2 && data[0] === 0xFF && data[1] === 0xFE) {
+    return new TextDecoder('utf-16le').decode(data.slice(2));
+  }
+
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(data);
+  } catch (error) {
+    try {
+      return new TextDecoder('gb18030').decode(data);
+    } catch (decodeError) {
+      return Buffer.from(data).toString('utf8');
+    }
+  }
+}
+
+function parseCsvImportRows(text) {
+  const normalizedText = String(text || '').replace(/^\uFEFF/, '').trim();
+  if (!normalizedText) {
+    throw new Error('CSV 文件为空');
+  }
+
+  const delimiter = detectCsvDelimiter(normalizedText);
+  const table = parseDelimitedTable(normalizedText, delimiter).filter((row) => row.some((cell) => String(cell || '').trim()));
+  if (table.length < 2) {
+    throw new Error('CSV 文件没有可导入的数据行');
+  }
+
+  const headers = table[0].map(normalizeImportHeader);
+  const getColumn = (name) => headers.indexOf(name);
+  const indexes = {
+    group: getColumn('分组'),
+    name: getColumn('名称'),
+    code: getColumn('代码'),
+    cost: getColumn('成本'),
+    holding: getColumn('持仓')
+  };
+
+  if (indexes.name < 0 && indexes.code < 0) {
+    throw new Error('CSV 必须包含“名称”或“代码”列');
+  }
+
+  return table.slice(1).map((row, index) => ({
+    line: index + 2,
+    group: getImportCell(row, indexes.group),
+    name: getImportCell(row, indexes.name),
+    code: getImportCell(row, indexes.code),
+    costText: getImportCell(row, indexes.cost),
+    holdingText: getImportCell(row, indexes.holding)
+  }));
+}
+
+async function resolveImportRows(rows, config, output, progress) {
+  const existingCodes = new Set(config.symbols.map((symbol) => symbol.code));
+  const importedCodes = new Set();
+  const groups = [];
+  const symbols = [];
+  let validated = 0;
+  let skipped = 0;
+
+  for (const [index, row] of rows.entries()) {
+    progress.report({
+      increment: rows.length > 0 ? 100 / rows.length : 100,
+      message: `${index + 1}/${rows.length}`
+    });
+
+    const parsed = parseImportRow(row);
+    if (!parsed.ok) {
+      skipped += 1;
+      output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: ${parsed.reason}`);
+      continue;
+    }
+
+    const resolved = await resolveImportedSymbol(parsed.value, config.requestTimeoutMs);
+    if (!resolved) {
+      skipped += 1;
+      output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: 标的无效或没有真实行情`);
+      continue;
+    }
+
+    validated += 1;
+    if (existingCodes.has(resolved.code) || importedCodes.has(resolved.code)) {
+      skipped += 1;
+      output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: ${resolved.code} 已存在`);
+      continue;
+    }
+
+    importedCodes.add(resolved.code);
+    if (!groups.includes(parsed.value.group)) {
+      groups.push(parsed.value.group);
+    }
+    symbols.push({
+      code: resolved.code,
+      name: parsed.value.name || resolved.name || resolved.code,
+      group: parsed.value.group,
+      cost: parsed.value.cost,
+      holding: parsed.value.holding
+    });
+  }
+
+  return {
+    symbols,
+    groups,
+    validated,
+    skipped
+  };
+}
+
+function parseImportRow(row) {
+  const group = normalizeGroupName(row.group) || DEFAULT_GROUP;
+  const name = String(row.name || '').trim();
+  const code = String(row.code || '').trim();
+  if (!name && !code) {
+    return { ok: false, reason: '名称和代码不能同时为空' };
+  }
+
+  const cost = parseOptionalImportDecimal(row.costText);
+  if (!cost.ok) {
+    return { ok: false, reason: '成本必须是小数' };
+  }
+
+  const holding = parseOptionalImportInteger(row.holdingText);
+  if (!holding.ok) {
+    return { ok: false, reason: '持仓必须是整数' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      group,
+      name,
+      code,
+      cost: cost.value,
+      holding: holding.value
+    }
+  };
+}
+
+async function resolveImportedSymbol(row, timeoutMs) {
+  const code = normalizeCode(row.code);
+  if (code) {
+    const quote = await fetchSingleUsableQuote({ code, name: row.name || code, group: row.group }, timeoutMs);
+    if (!quote) {
+      return undefined;
+    }
+
+    const searchName = await findSymbolNameByCode(code, timeoutMs);
+    return {
+      code,
+      name: searchName || row.name || code
+    };
+  }
+
+  if (!row.name) {
+    return undefined;
+  }
+
+  const results = await fetchSymbolSearchResults(row.name, timeoutMs).catch(() => []);
+  const candidates = results.slice(0, 6).map((item) => ({
+    code: item.code,
+    name: item.name,
+    group: row.group
+  }));
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const quotes = await fetchQuotes(candidates, timeoutMs).catch(() => []);
+  const usable = quotes.find((quote) => isUsableQuote(quote));
+  if (!usable) {
+    return undefined;
+  }
+
+  const matched = candidates.find((item) => item.code === usable.code);
+  return {
+    code: usable.code,
+    name: matched ? matched.name : usable.code
+  };
+}
+
+async function fetchSingleUsableQuote(symbol, timeoutMs) {
+  const quotes = await fetchQuotes([symbol], timeoutMs).catch(() => []);
+  const quote = quotes[0];
+  return isUsableQuote(quote) ? quote : undefined;
+}
+
+async function findSymbolNameByCode(code, timeoutMs) {
+  const results = await fetchSymbolSearchResults(code, timeoutMs).catch(() => []);
+  const matched = results.find((item) => item.code === code);
+  return matched ? matched.name : '';
+}
+
+function detectCsvDelimiter(text) {
+  const firstLine = String(text).split(/\r?\n/, 1)[0] || '';
+  const commaCount = countDelimiterOutsideQuotes(firstLine, ',');
+  const tabCount = countDelimiterOutsideQuotes(firstLine, '\t');
+  return tabCount > commaCount ? '\t' : ',';
+}
+
+function countDelimiterOutsideQuotes(line, delimiter) {
+  let count = 0;
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (!quoted && char === delimiter) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function parseDelimitedTable(text, delimiter) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && text[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+
+    if (!quoted && char === delimiter) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if (!quoted && (char === '\n' || char === '\r')) {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      if (char === '\r' && text[index + 1] === '\n') {
+        index += 1;
+      }
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows;
+}
+
+function normalizeImportHeader(value) {
+  return String(value || '').replace(/^\uFEFF/, '').trim();
+}
+
+function getImportCell(row, index) {
+  if (index < 0 || index >= row.length) {
+    return '';
+  }
+  return String(row[index] || '').trim();
+}
+
+function parseOptionalImportDecimal(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return { ok: true, value: null };
+  }
+
+  const parsed = Number(text);
+  return Number.isFinite(parsed)
+    ? { ok: true, value: parsed }
+    : { ok: false, value: null };
+}
+
+function parseOptionalImportInteger(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return { ok: true, value: null };
+  }
+  if (!/^-?\d+$/.test(text)) {
+    return { ok: false, value: null };
+  }
+
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed)
+    ? { ok: true, value: parsed }
+    : { ok: false, value: null };
+}
+
+function buildCsvRows(groups, priceDecimalPlaces) {
+  const rows = [[
+    '分组',
+    '名称',
+    '代码',
+    '价格',
+    '涨跌幅',
+    '涨跌额',
+    '成本',
+    '持仓',
+    '净收益额'
+  ]];
+
+  for (const group of groups) {
+    if (!Array.isArray(group.items) || group.items.length === 0) {
+      continue;
+    }
+
+    for (const quote of group.items) {
+      rows.push([
+        group.name,
+        quote.name,
+        quote.code,
+        formatOptionalDecimal(quote.price, priceDecimalPlaces),
+        formatOptionalSignedPercent(quote.changePercent),
+        formatOptionalSignedDecimal(quote.change, priceDecimalPlaces),
+        formatOptionalDecimal(quote.cost, 3),
+        formatOptionalDecimal(quote.holding, 0),
+        formatOptionalSignedDecimal(calculateNetProfitValue(quote), priceDecimalPlaces)
+      ]);
+    }
+
+    const summary = calculateGroupPortfolioSummaryValue(group.items);
+    rows.push([
+      group.name,
+      '汇总',
+      '',
+      formatOptionalLargeAmount(summary.totalAssets),
+      formatOptionalSignedPercent(summary.dailyProfitPercent),
+      formatOptionalSignedLargeAmount(summary.dailyProfit),
+      '',
+      '',
+      '',
+      ''
+    ]);
+  }
+
+  return rows;
+}
+
+function calculateNetProfitValue(quote) {
+  if (quote.price === null || quote.price === undefined || quote.cost === null || quote.cost === undefined || quote.holding === null || quote.holding === undefined) {
+    return null;
+  }
+  const holding = Number(quote.holding);
+  if (!Number.isFinite(holding)) {
+    return null;
+  }
+  return (quote.price - quote.cost) * holding;
+}
+
+function calculateGroupPortfolioSummaryValue(items) {
+  let totalAssets = 0;
+  let dailyProfit = 0;
+  let previousAssets = 0;
+  let assetCount = 0;
+  let profitCount = 0;
+
+  for (const item of items) {
+    if (item.cost === null || item.cost === undefined || item.holding === null || item.holding === undefined || item.price === null || item.price === undefined) {
+      continue;
+    }
+
+    const holding = Number(item.holding);
+    if (!Number.isFinite(holding) || holding <= 0) {
+      continue;
+    }
+
+    totalAssets += item.price * holding;
+    assetCount += 1;
+
+    if (item.change !== null && item.change !== undefined) {
+      dailyProfit += item.change * holding;
+      profitCount += 1;
+    }
+    if (item.previousClose !== null && item.previousClose !== undefined) {
+      previousAssets += item.previousClose * holding;
+    }
+  }
+
+  return {
+    totalAssets: assetCount > 0 ? totalAssets : null,
+    dailyProfit: profitCount > 0 ? dailyProfit : null,
+    dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
+  };
+}
+
+function toCsv(rows) {
+  return `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')}`;
+}
+
+function escapeCsvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function formatOptionalDecimal(value, digits) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return '';
+  }
+  return formatDecimalTrimmed(number, digits);
+}
+
+function formatOptionalSignedDecimal(value, digits) {
+  const formatted = formatOptionalDecimal(value, digits);
+  if (!formatted) {
+    return '';
+  }
+  return Number(value) > 0 ? `+${formatted}` : formatted;
+}
+
+function formatOptionalSignedPercent(value) {
+  const formatted = formatOptionalDecimal(value, 2);
+  if (!formatted) {
+    return '';
+  }
+  return `${Number(value) > 0 ? '+' : ''}${formatted}%`;
+}
+
+function formatOptionalLargeAmount(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return '';
+  }
+  if (Math.abs(amount) > 10000) {
+    return `${formatDecimalTrimmed(amount / 10000, 2)}W`;
+  }
+  return formatDecimalTrimmed(amount, 2);
+}
+
+function formatOptionalSignedLargeAmount(value) {
+  const formatted = formatOptionalLargeAmount(value);
+  if (!formatted) {
+    return '';
+  }
+  return Number(value) > 0 ? `+${formatted}` : formatted;
+}
+
+function formatDecimalTrimmed(value, digits) {
+  return Number(value).toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+}
+
+function formatFileTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join('') + '-' + [
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join('');
 }
 
 function groupAlertsByCode(alerts) {

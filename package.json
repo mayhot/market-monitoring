@@ -2,8 +2,9 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.1.0",
-  "publisher": "local",
+  "version": "0.1.1",
+  "publisher": "niangao",
+  "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -14,6 +15,8 @@
     "onStartupFinished",
     "onView:marketMonitoring.quotesView",
     "onCommand:marketMonitoring.refresh",
+    "onCommand:marketMonitoring.importCsv",
+    "onCommand:marketMonitoring.exportCsv",
     "onCommand:marketMonitoring.start",
     "onCommand:marketMonitoring.stop",
     "onCommand:marketMonitoring.openSettings"
@@ -25,6 +28,16 @@
         "command": "marketMonitoring.refresh",
         "title": "Market Monitoring: Refresh Quotes",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "marketMonitoring.importCsv",
+        "title": "Market Monitoring: Import CSV",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "marketMonitoring.exportCsv",
+        "title": "Market Monitoring: Export CSV",
+        "icon": "$(export)"
       },
       {
         "command": "marketMonitoring.start",
@@ -69,6 +82,16 @@
           "group": "navigation"
         },
         {
+          "command": "marketMonitoring.importCsv",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "navigation"
+        },
+        {
+          "command": "marketMonitoring.exportCsv",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "navigation"
+        },
+        {
           "command": "marketMonitoring.openSettings",
           "when": "view == marketMonitoring.quotesView",
           "group": "navigation"
@@ -77,6 +100,12 @@
       "commandPalette": [
         {
           "command": "marketMonitoring.refresh"
+        },
+        {
+          "command": "marketMonitoring.importCsv"
+        },
+        {
+          "command": "marketMonitoring.exportCsv"
         },
         {
           "command": "marketMonitoring.start"
