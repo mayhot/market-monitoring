@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const path = require('path');
+const { pinyin } = require('pinyin-pro');
 const vscode = require('vscode');
 
 const CONFIG_SECTION = 'marketMonitoring';
@@ -16,7 +17,6 @@ const INDEX_SYMBOLS = [
   { code: 'bj899050', name: '北证50', group: '指数' }
 ];
 const DEFAULT_INDEX_CODE = 'sh000001';
-
 function activate(context) {
   const output = vscode.window.createOutputChannel('Market Monitoring');
   const provider = new QuotesViewProvider(context.extensionUri);
@@ -280,6 +280,11 @@ class MarketMonitor {
     });
 
     await updateConfiguredSymbols(nextSymbols);
+    this.config = {
+      ...this.config,
+      symbols: nextSymbols
+    };
+    this.updateViews(getMarketPhase().name);
   }
 
   async importCsv() {
@@ -941,6 +946,10 @@ class QuotesViewProvider {
       grid-template-columns: repeat(8, minmax(20px, 1fr));
     }
 
+    .quote.cols-9 {
+      grid-template-columns: repeat(9, minmax(20px, 1fr));
+    }
+
     .quote.editing.cols-1 {
       grid-template-columns: minmax(20px, 1fr) max-content;
     }
@@ -971,6 +980,10 @@ class QuotesViewProvider {
 
     .quote.editing.cols-8 {
       grid-template-columns: repeat(8, minmax(20px, 1fr)) max-content;
+    }
+
+    .quote.editing.cols-9 {
+      grid-template-columns: repeat(9, minmax(20px, 1fr)) max-content;
     }
 
     .quote-header {
@@ -1902,6 +1915,10 @@ class QuotesViewProvider {
           '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">预警</span>' : '') + '</div>' +
         '</div>';
       }
+      if (column === 'alias') {
+        const alias = quote.alias || '';
+        return '<div class="' + cellClass + ' code" title="' + escapeHtml(alias) + '">' + escapeHtml(alias || '--') + '</div>';
+      }
       if (column === 'code') {
         return '<div class="' + cellClass + ' code">' + escapeHtml(quote.code) + '</div>';
       }
@@ -1960,7 +1977,7 @@ class QuotesViewProvider {
     }
 
     function getQuoteGridClass(columns) {
-      return 'cols-' + Math.max(1, Math.min(8, columns.length));
+      return 'cols-' + Math.max(1, Math.min(9, columns.length));
     }
 
     function getGridTemplate(columns, editing) {
@@ -1988,6 +2005,7 @@ class QuotesViewProvider {
     function getColumnLabel(column) {
       return {
         name: '名称',
+        alias: '别名',
         code: '代码',
         price: '价格',
         changePercent: '涨跌幅',
@@ -1999,7 +2017,7 @@ class QuotesViewProvider {
     }
 
     function getColumnClass(column) {
-      return column === 'name' || column === 'code' ? '' : 'numeric';
+      return column === 'name' || column === 'alias' || column === 'code' ? '' : 'numeric';
     }
 
     function sortQuotesForColumn(items, column, direction) {
@@ -2016,6 +2034,9 @@ class QuotesViewProvider {
     function compareColumnValue(left, right, column) {
       if (column === 'name') {
         return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      }
+      if (column === 'alias') {
+        return String(left.alias || '').localeCompare(String(right.alias || ''));
       }
       if (column === 'code') {
         return String(left.code || '').localeCompare(String(right.code || ''));
@@ -2666,7 +2687,7 @@ function buildIndexQuotes(quotes) {
 function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy, sortDirection) {
   const order = [];
   const groups = new Map();
-  const quoteByCodeAndName = new Map(quotes.map((quote) => [`${quote.code}\n${quote.name}\n${quote.group}`, quote]));
+  const quoteByCode = new Map(quotes.map((quote) => [quote.code, quote]));
   const alertsByCode = groupAlertsByCode(alerts);
 
   for (const groupName of configuredGroups) {
@@ -2683,8 +2704,14 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
       order.push(key);
     }
 
-    const quote = quoteByCodeAndName.get(`${symbol.code}\n${symbol.name}\n${symbol.group}`);
-    const item = quote || {
+    const quote = quoteByCode.get(symbol.code);
+    const item = quote ? {
+      ...quote,
+      name: symbol.name,
+      group: symbol.group,
+      cost: symbol.cost,
+      holding: symbol.holding
+    } : {
       ...symbol,
       price: null,
       previousClose: null,
@@ -2695,6 +2722,7 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
     };
     groups.get(key).push({
       ...item,
+      alias: toPinyin(item.name),
       index,
       alerts: alertsByCode.get(symbol.code) || []
     });
@@ -3013,6 +3041,7 @@ function buildCsvRows(groups, priceDecimalPlaces) {
   const rows = [[
     '分组',
     '名称',
+    '别名',
     '代码',
     '价格',
     '涨跌幅',
@@ -3031,6 +3060,7 @@ function buildCsvRows(groups, priceDecimalPlaces) {
       rows.push([
         group.name,
         quote.name,
+        quote.alias || toPinyin(quote.name),
         quote.code,
         formatOptionalDecimal(quote.price, priceDecimalPlaces),
         formatOptionalSignedPercent(quote.changePercent),
@@ -3046,10 +3076,10 @@ function buildCsvRows(groups, priceDecimalPlaces) {
       group.name,
       '汇总',
       '',
+      '',
       formatOptionalLargeAmount(summary.totalAssets),
       formatOptionalSignedPercent(summary.dailyProfitPercent),
       formatOptionalSignedLargeAmount(summary.dailyProfit),
-      '',
       '',
       '',
       ''
@@ -3068,6 +3098,14 @@ function calculateNetProfitValue(quote) {
     return null;
   }
   return (quote.price - quote.cost) * holding;
+}
+
+function toPinyin(value) {
+  return pinyin(String(value || ''), {
+    toneType: 'none',
+    nonZh: 'consecutive',
+    separator: "'"
+  });
 }
 
 function calculateGroupPortfolioSummaryValue(items) {
@@ -3226,6 +3264,9 @@ function compareQuote(left, right, sortBy) {
   if (sortBy === 'name') {
     return left.name.localeCompare(right.name, 'zh-CN');
   }
+  if (sortBy === 'alias') {
+    return toPinyin(left.name).localeCompare(toPinyin(right.name));
+  }
   if (sortBy === 'code') {
     return left.code.localeCompare(right.code);
   }
@@ -3371,7 +3412,7 @@ function buildStatusTooltip(snapshot) {
 }
 
 function sanitizeSortBy(value) {
-  const allowed = new Set(['configured', 'changePercent', 'price', 'name', 'code']);
+  const allowed = new Set(['configured', 'changePercent', 'price', 'name', 'alias', 'code']);
   return allowed.has(value) ? value : 'configured';
 }
 
@@ -3384,7 +3425,7 @@ function sanitizeDecimalPlaces(value) {
 }
 
 function sanitizeQuoteColumns(value) {
-  const allowed = new Set(['name', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
+  const allowed = new Set(['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
   const defaults = ['name', 'price', 'changePercent'];
   if (!Array.isArray(value)) {
     return defaults;

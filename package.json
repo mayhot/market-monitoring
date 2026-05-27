@@ -59,7 +59,7 @@
       "activitybar": [
         {
           "id": "marketMonitoring",
-          "title": "Market",
+          "title": "Market Monitoring",
           "icon": "resources/market.svg"
         }
       ]
@@ -228,6 +228,7 @@
             "type": "string",
             "enum": [
               "name",
+              "alias",
               "code",
               "price",
               "changePercent",
@@ -238,6 +239,7 @@
             ],
             "enumDescriptions": [
               "Name.",
+              "Alias generated from name pinyin.",
               "Code.",
               "Latest price.",
               "Change percentage.",
@@ -257,6 +259,7 @@
             "changePercent",
             "price",
             "name",
+            "alias",
             "code"
           ],
           "enumDescriptions": [
@@ -264,6 +267,7 @@
             "Sort by change percentage.",
             "Sort by latest price.",
             "Sort by display name.",
+            "Sort by generated pinyin alias.",
             "Sort by code."
           ],
           "description": "Sort quotes inside each group."
@@ -346,5 +350,8 @@
   },
   "devDependencies": {
     "@vscode/vsce": "^3.2.2"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.28.1"
   }
 }

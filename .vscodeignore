@@ -2,4 +2,8 @@
 .git/**
 .gitignore
 node_modules/**
+!node_modules/pinyin-pro/
+!node_modules/pinyin-pro/dist/**
+!node_modules/pinyin-pro/package.json
+!node_modules/pinyin-pro/LICENSE
 *.vsix
