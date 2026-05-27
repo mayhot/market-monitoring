@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "niangao",
   "icon": "resources/icon.png",
   "engines": {
@@ -200,6 +200,21 @@
           "minimum": 0,
           "maximum": 6,
           "description": "Decimal places used for quote price display."
+        },
+        "marketMonitoring.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "zh-CN",
+            "en-US"
+          ],
+          "enumDescriptions": [
+            "Follow the current VS Code display language.",
+            "Use Simplified Chinese.",
+            "Use English."
+          ],
+          "description": "Display language for the Market Monitoring view."
         },
         "marketMonitoring.colorMode": {
           "type": "string",

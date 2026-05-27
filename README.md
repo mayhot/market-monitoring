@@ -8,6 +8,7 @@
 - 新增标的支持按名称、简称、拼音、拼音首字母或代码搜索后选择。
 - 分组支持折叠和展开。
 - 在行情面板中添加标的，并通过分组标题的编辑按钮修改名称、删除、上移、下移标的。
+- 支持中文、英文界面切换，也可跟随 VS Code 显示语言。
 - 涨跌颜色模式可配置，默认无颜色。
 - 支持按涨跌幅阈值给标的行添加低调的左侧色带标识。
 - 自定义价格小数位。
@@ -55,6 +56,7 @@
     "changePercent"
   ],
   "marketMonitoring.priceDecimalPlaces": 2,
+  "marketMonitoring.language": "auto",
   "marketMonitoring.colorMode": "none",
   "marketMonitoring.rowHighlightUpPercent": 5,
   "marketMonitoring.rowHighlightDownPercent": 5,
@@ -132,6 +134,10 @@
 ## 价格小数位
 
 `marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数，默认 `2`，支持 `0-6`。
+
+## 语言切换
+
+`marketMonitoring.language` 控制行情面板显示语言，默认 `auto`，会跟随 VS Code 显示语言。可选值为 `auto`、`zh-CN`、`en-US`。行情面板顶部的设置按钮也提供语言下拉切换。
 
 ## 涨跌颜色
 

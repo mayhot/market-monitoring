@@ -8,8 +8,14 @@ const vscode = require('vscode');
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
 const DEFAULT_GROUP = '自选';
+const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit'];
+const LANGUAGE_LABELS = {
+  auto: 'Auto',
+  'zh-CN': '中文',
+  'en-US': 'English'
+};
 const INDEX_SYMBOLS = [
   { code: 'sh000985', name: '中证全指', group: '指数' },
   { code: 'sh000001', name: '上证指数', group: '指数' },
@@ -57,6 +63,8 @@ function activate(context) {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
     } else if (message.command === 'updateQuoteColumns') {
       monitor.updateQuoteColumns(message.columns);
+    } else if (message.command === 'updateLanguage') {
+      monitor.updateLanguage(message.language);
     } else if (message.command === 'start') {
       monitor.start(true);
     } else if (message.command === 'stop') {
@@ -302,6 +310,18 @@ class MarketMonitor {
     this.updateViews(getMarketPhase().name);
   }
 
+  async updateLanguage(language) {
+    const nextLanguage = sanitizeLanguage(language);
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    await config.update('language', nextLanguage, getConfigTarget(config, 'language'));
+    this.config = {
+      ...this.config,
+      language: nextLanguage,
+      locale: resolveLanguage(nextLanguage)
+    };
+    this.updateViews(getMarketPhase().name);
+  }
+
   async importCsv() {
     const uris = await vscode.window.showOpenDialog({
       canSelectFiles: true,
@@ -502,6 +522,8 @@ class MarketMonitor {
       phaseName,
       updatedAt: this.lastUpdatedAt,
       error: this.lastError,
+      language: this.config.language,
+      locale: this.config.locale,
       colors: this.config.colors,
       alerts: this.triggeredAlerts,
       sortBy: this.config.sortBy,
@@ -528,6 +550,8 @@ class QuotesViewProvider {
       phaseName: '未启动',
       updatedAt: '',
       error: '',
+      language: DEFAULT_LANGUAGE,
+      locale: resolveLanguage(DEFAULT_LANGUAGE),
       colors: getColorPalette('none'),
       alerts: [],
       sortBy: 'configured',
@@ -753,6 +777,14 @@ class QuotesViewProvider {
     .column-config-list {
       display: grid;
       gap: 5px;
+    }
+
+    .config-select-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
     }
 
     .column-config-item {
@@ -1360,6 +1392,111 @@ class QuotesViewProvider {
     const vscode = acquireVsCodeApi();
     const defaultGroupName = ${JSON.stringify(DEFAULT_GROUP)};
     const availableQuoteColumns = ${JSON.stringify(AVAILABLE_QUOTE_COLUMNS)};
+    const languageLabels = ${JSON.stringify(LANGUAGE_LABELS)};
+    const i18n = {
+      'zh-CN': {
+        notStarted: '未启动',
+        start: '启动',
+        pause: '暂停',
+        refresh: '刷新',
+        importCsv: '导入 CSV',
+        exportCsv: '导出 CSV',
+        settings: '设置',
+        addGroup: '新增分组',
+        switchIndex: '切换指数',
+        refreshing: '刷新中',
+        sortHint: '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。',
+        noSymbols: '暂无标的，请在设置中配置 marketMonitoring.symbols。',
+        tableColumns: '表格列',
+        language: '语言',
+        openNativeSettings: '打开 VS Code 设置',
+        resetColumns: '恢复默认列',
+        showColumn: '显示',
+        moveUp: '上移',
+        moveDown: '下移',
+        expand: '展开',
+        collapse: '折叠',
+        currentAssets: '当前总资产',
+        dailyProfitSummary: '按涨跌额 * 持仓汇总',
+        groupName: '分组名称',
+        saveGroupName: '保存分组名称',
+        collapseAdd: '收起添加',
+        addSymbol: '添加标的',
+        doneEditing: '完成修改',
+        editGroup: '修改分组',
+        searchPlaceholder: '搜索名称、代码或拼音',
+        addToGroup: '添加到该分组',
+        searchPending: '搜索中...',
+        noMatches: '没有找到匹配标的',
+        choose: '选择',
+        selectFromResults: '请先从搜索结果中选择标的',
+        sortByColumn: '排序',
+        dragColumnWidth: '拖动调整列宽',
+        action: '操作',
+        deleteSymbol: '删除标的',
+        alert: '预警',
+        name: '名称',
+        alias: '别名',
+        code: '代码',
+        price: '价格',
+        changePercent: '涨跌幅',
+        change: '涨跌额',
+        cost: '成本',
+        holding: '持仓',
+        netProfit: '净收益额'
+      },
+      'en-US': {
+        notStarted: 'Not started',
+        start: 'Start',
+        pause: 'Pause',
+        refresh: 'Refresh',
+        importCsv: 'Import CSV',
+        exportCsv: 'Export CSV',
+        settings: 'Settings',
+        addGroup: 'Add group',
+        switchIndex: 'Switch index',
+        refreshing: 'Refreshing',
+        sortHint: 'Currently sorted by quote fields. Up/down changes the configured order, shown when sortBy is configured.',
+        noSymbols: 'No symbols yet. Configure marketMonitoring.symbols in settings.',
+        tableColumns: 'Table columns',
+        language: 'Language',
+        openNativeSettings: 'Open VS Code Settings',
+        resetColumns: 'Reset columns',
+        showColumn: 'Show',
+        moveUp: 'Move up',
+        moveDown: 'Move down',
+        expand: 'Expand',
+        collapse: 'Collapse',
+        currentAssets: 'Current assets',
+        dailyProfitSummary: 'Summary by price change * holding',
+        groupName: 'Group name',
+        saveGroupName: 'Save group name',
+        collapseAdd: 'Collapse add form',
+        addSymbol: 'Add symbol',
+        doneEditing: 'Done',
+        editGroup: 'Edit group',
+        searchPlaceholder: 'Search name, code, or pinyin',
+        addToGroup: 'Add to this group',
+        searchPending: 'Searching...',
+        noMatches: 'No matching symbols',
+        choose: 'Choose',
+        selectFromResults: 'Choose a symbol from search results first',
+        sortByColumn: 'Sort',
+        dragColumnWidth: 'Drag to resize column',
+        action: 'Action',
+        deleteSymbol: 'Delete symbol',
+        alert: 'Alert',
+        name: 'Name',
+        alias: 'Alias',
+        code: 'Code',
+        price: 'Price',
+        changePercent: 'Change %',
+        change: 'Change',
+        cost: 'Cost',
+        holding: 'Holding',
+        netProfit: 'Net profit'
+      }
+    };
     let viewState = vscode.getState() || {};
     const app = document.getElementById('app');
     const phase = document.getElementById('phase');
@@ -1375,6 +1512,7 @@ class QuotesViewProvider {
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
     const dynamicColors = document.getElementById('dynamic-colors');
+    let locale = 'zh-CN';
     let selectedIndexCode = viewState.selectedIndexCode || 'sh000001';
     let editingGroups = viewState.editingGroups || {};
     let collapsedGroups = viewState.collapsedGroups || {};
@@ -1479,7 +1617,7 @@ class QuotesViewProvider {
         }
 
         if (!selectedSymbol) {
-          symbolSearchError = '请先从搜索结果中选择标的';
+          symbolSearchError = t('selectFromResults');
           renderActiveSymbolResults();
           focusGroupSearch(group);
           return;
@@ -1579,6 +1717,11 @@ class QuotesViewProvider {
       }
     });
     configPanel.addEventListener('change', (event) => {
+      const select = event.target.closest('select[data-setting="language"]');
+      if (select) {
+        updateLanguage(select.value);
+        return;
+      }
       const input = event.target.closest('input[data-column]');
       if (!input) {
         return;
@@ -1743,7 +1886,7 @@ class QuotesViewProvider {
       }
 
       if (symbolSearchLoading) {
-        container.innerHTML = '<div class="symbol-result-empty">搜索中...</div>';
+        container.innerHTML = '<div class="symbol-result-empty">' + escapeHtml(t('searchPending')) + '</div>';
         return;
       }
 
@@ -1753,17 +1896,26 @@ class QuotesViewProvider {
       }
 
       if (symbolSearchResults.length === 0) {
-        container.innerHTML = '<div class="symbol-result-empty">没有找到匹配标的</div>';
+        container.innerHTML = '<div class="symbol-result-empty">' + escapeHtml(t('noMatches')) + '</div>';
         return;
       }
 
       container.innerHTML = symbolSearchResults.map((item) => {
         const selected = selectedSymbol && selectedSymbol.code === item.code;
-        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="选择 ' + escapeHtml(item.name) + '">' +
+        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="' + escapeHtml(t('choose') + ' ' + item.name) + '">' +
           '<span class="symbol-result-main">' + escapeHtml(item.name) + '</span>' +
           '<span class="symbol-result-code">' + escapeHtml(item.market || '') + ' ' + escapeHtml(item.code) + '</span>' +
         '</button>';
       }).join('');
+    }
+
+    function t(key) {
+      const dict = i18n[locale] || i18n['zh-CN'];
+      return dict[key] || i18n['zh-CN'][key] || key;
+    }
+
+    function getLanguageLabel(language) {
+      return languageLabels[language] || language;
     }
 
     function applyColumnWidths() {
@@ -1780,21 +1932,24 @@ class QuotesViewProvider {
 
     function render(snapshot) {
       latestSnapshot = snapshot;
+      locale = snapshot.locale || 'zh-CN';
+      document.documentElement.lang = locale;
+      updateStaticLabels();
       const rowHighlightUp = snapshot.colors.mode === 'none' ? '#d73a49' : snapshot.colors.up;
       const rowHighlightDown = snapshot.colors.mode === 'none' ? '#16a34a' : snapshot.colors.down;
       dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
       toggle.dataset.running = String(snapshot.running);
       toggle.textContent = snapshot.running ? '⏸' : '▶';
-      toggle.title = snapshot.running ? '暂停' : '启动';
+      toggle.title = snapshot.running ? t('pause') : t('start');
       toggle.setAttribute('aria-label', toggle.title);
       renderConfigPanel(snapshot);
 
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
-      phase.textContent = (snapshot.loading ? '刷新中 · ' : '') + snapshot.phaseName + extra;
+      phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
       sortHint.textContent = snapshot.sortBy === 'configured'
         ? ''
-        : '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。';
+        : t('sortHint');
 
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
@@ -1821,6 +1976,41 @@ class QuotesViewProvider {
         && Boolean(activeElement.closest('input[data-field], input[data-group-name], input[data-symbol-query], .group-symbol-form'));
     }
 
+    function updateStaticLabels() {
+      refresh.title = t('refresh');
+      refresh.setAttribute('aria-label', t('refresh'));
+      importCsv.title = t('importCsv');
+      importCsv.setAttribute('aria-label', t('importCsv'));
+      exportCsv.title = t('exportCsv');
+      exportCsv.setAttribute('aria-label', t('exportCsv'));
+      settings.title = t('settings');
+      settings.setAttribute('aria-label', t('settings'));
+      groupName.placeholder = t('addGroup');
+      const addGroupButton = groupForm.querySelector('button[type="submit"]');
+      if (addGroupButton) {
+        addGroupButton.title = t('addGroup');
+        addGroupButton.setAttribute('aria-label', t('addGroup'));
+      }
+      indexSelect.title = t('switchIndex');
+    }
+
+    function localizePhase(value) {
+      const phaseMap = {
+        '未启动': { 'zh-CN': '未启动', 'en-US': 'Not started' },
+        '已暂停': { 'zh-CN': '已暂停', 'en-US': 'Paused' },
+        '休市': { 'zh-CN': '休市', 'en-US': 'Closed' },
+        '开盘集合竞价': { 'zh-CN': '开盘集合竞价', 'en-US': 'Opening call auction' },
+        '竞价撮合': { 'zh-CN': '竞价撮合', 'en-US': 'Auction matching' },
+        '上午连续竞价': { 'zh-CN': '上午连续竞价', 'en-US': 'Morning continuous auction' },
+        '午间休市': { 'zh-CN': '午间休市', 'en-US': 'Midday break' },
+        '下午连续竞价': { 'zh-CN': '下午连续竞价', 'en-US': 'Afternoon continuous auction' },
+        '收盘集合竞价': { 'zh-CN': '收盘集合竞价', 'en-US': 'Closing call auction' },
+        '非交易时段': { 'zh-CN': '非交易时段', 'en-US': 'Non-trading session' }
+      };
+      const translated = phaseMap[value];
+      return translated ? translated[locale] || translated['zh-CN'] : value;
+    }
+
     function renderConfigPanel(snapshot) {
       configPanel.hidden = !settingsOpen;
       if (!settingsOpen) {
@@ -1830,15 +2020,25 @@ class QuotesViewProvider {
 
       const columns = normalizeQuoteColumns(snapshot && snapshot.quoteColumns);
       const orderedColumns = getConfigPanelColumns(columns);
+      const selectedLanguage = snapshot && snapshot.language ? snapshot.language : 'auto';
       configPanel.innerHTML = '<div class="config-panel-title">' +
-          '<span>表格列</span>' +
-          '<button class="secondary icon-button" data-action="openNativeSettings" title="打开 VS Code 设置" aria-label="打开 VS Code 设置">⚙</button>' +
+          '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
+          '<button class="secondary icon-button" data-action="openNativeSettings" title="' + escapeHtml(t('openNativeSettings')) + '" aria-label="' + escapeHtml(t('openNativeSettings')) + '">⚙</button>' +
+        '</div>' +
+        '<label class="config-select-row">' +
+          '<span>' + escapeHtml(t('language')) + '</span>' +
+          '<select data-setting="language">' +
+            ['auto', 'zh-CN', 'en-US'].map((language) => '<option value="' + language + '"' + (language === selectedLanguage ? ' selected' : '') + '>' + escapeHtml(getLanguageLabel(language)) + '</option>').join('') +
+          '</select>' +
+        '</label>' +
+        '<div class="config-panel-title">' +
+          '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
         '</div>' +
         '<div class="column-config-list">' +
           orderedColumns.map((column) => renderColumnConfigItem(column, columns)).join('') +
         '</div>' +
         '<div class="config-actions">' +
-          '<button class="secondary icon-button" data-action="resetQuoteColumns" title="恢复默认列" aria-label="恢复默认列">↺</button>' +
+          '<button class="secondary icon-button" data-action="resetQuoteColumns" title="' + escapeHtml(t('resetColumns')) + '" aria-label="' + escapeHtml(t('resetColumns')) + '">↺</button>' +
         '</div>';
     }
 
@@ -1855,10 +2055,10 @@ class QuotesViewProvider {
       const canMoveDown = visible && visibleIndex >= 0 && visibleIndex < columns.length - 1;
       const canHide = !visible || columns.length > 1;
       return '<div class="column-config-item">' +
-        '<input type="checkbox" data-column="' + escapeHtml(column) + '" title="显示' + escapeHtml(getColumnLabel(column)) + '" aria-label="显示' + escapeHtml(getColumnLabel(column)) + '" ' + (visible ? 'checked ' : '') + (canHide ? '' : 'disabled') + '>' +
+        '<input type="checkbox" data-column="' + escapeHtml(column) + '" title="' + escapeHtml(t('showColumn') + ' ' + getColumnLabel(column)) + '" aria-label="' + escapeHtml(t('showColumn') + ' ' + getColumnLabel(column)) + '" ' + (visible ? 'checked ' : '') + (canHide ? '' : 'disabled') + '>' +
         '<label>' + escapeHtml(getColumnLabel(column)) + '</label>' +
-        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="up" title="上移" aria-label="上移" ' + (canMoveUp ? '' : 'disabled') + '>↑</button>' +
-        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="down" title="下移" aria-label="下移" ' + (canMoveDown ? '' : 'disabled') + '>↓</button>' +
+        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="up" title="' + escapeHtml(t('moveUp')) + '" aria-label="' + escapeHtml(t('moveUp')) + '" ' + (canMoveUp ? '' : 'disabled') + '>↑</button>' +
+        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="down" title="' + escapeHtml(t('moveDown')) + '" aria-label="' + escapeHtml(t('moveDown')) + '" ' + (canMoveDown ? '' : 'disabled') + '>↓</button>' +
       '</div>';
     }
 
@@ -1878,6 +2078,21 @@ class QuotesViewProvider {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
           applyColumnWidths();
         }
+      }
+    }
+
+    function updateLanguage(language) {
+      vscode.postMessage({
+        command: 'updateLanguage',
+        language
+      });
+      if (latestSnapshot) {
+        latestSnapshot = {
+          ...latestSnapshot,
+          language,
+          locale: language === 'auto' ? latestSnapshot.locale : language
+        };
+        render(latestSnapshot);
       }
     }
 
@@ -1936,7 +2151,7 @@ class QuotesViewProvider {
 
     function renderGroups(groups, snapshot) {
       if (!groups || groups.length === 0) {
-        return '<div class="empty">暂无标的，请在设置中配置 marketMonitoring.symbols。</div>';
+        return '<div class="empty">' + escapeHtml(t('noSymbols')) + '</div>';
       }
 
       return groups.map((group) => {
@@ -1959,7 +2174,7 @@ class QuotesViewProvider {
         return '<section class="group' + (editing ? ' editing' : '') + '">' +
           '<div class="group-title">' +
             '<span class="group-title-main">' +
-              '<button class="secondary icon-button" data-action="toggleGroup" data-group="' + escapeHtml(group.name) + '" title="' + (collapsed ? '展开' : '折叠') + '" aria-label="' + (collapsed ? '展开' : '折叠') + '">' + (collapsed ? '›' : '⌄') + '</button>' +
+              '<button class="secondary icon-button" data-action="toggleGroup" data-group="' + escapeHtml(group.name) + '" title="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '" aria-label="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '">' + (collapsed ? '›' : '⌄') + '</button>' +
               '<span class="group-name">' + escapeHtml(group.name) + '</span>' +
             '</span>' +
             '<span class="group-title-actions">' +
@@ -1985,8 +2200,8 @@ class QuotesViewProvider {
         : formatSignedLargeAmount(summary.dailyProfit) + (summary.dailyProfitPercent === null ? '' : ' ' + formatSigned(summary.dailyProfitPercent, 2) + '%');
 
       return '<div class="group-summary">' +
-        '<span title="当前总资产">' + assets + '</span>' +
-        '<span class="quote-change ' + profitTrend + '" title="按涨跌额 * 持仓汇总">' + escapeHtml(profitText) + '</span>' +
+        '<span title="' + escapeHtml(t('currentAssets')) + '">' + assets + '</span>' +
+        '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfitSummary')) + '">' + escapeHtml(profitText) + '</span>' +
       '</div>';
     }
 
@@ -2056,12 +2271,12 @@ class QuotesViewProvider {
       return '<div class="group-footer">' +
         (adding ? renderGroupSymbolSearch(groupName) : '') +
         (editing ? '<div class="group-rename-row">' +
-          '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="分组名称">' +
-          '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="保存分组名称" aria-label="保存分组名称">✓</button>' +
+          '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('groupName')) + '">' +
+          '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('saveGroupName')) + '" aria-label="' + escapeHtml(t('saveGroupName')) + '">✓</button>' +
         '</div>' : '') +
         '<div class="group-footer-actions">' +
-          '<button class="secondary icon-button" data-action="addToGroup" data-group="' + escapeHtml(groupName) + '" title="' + (adding ? '收起添加' : '添加标的') + '" aria-label="' + (adding ? '收起添加' : '添加标的') + '">' + (adding ? '−' : '＋') + '</button>' +
-          '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? '完成修改' : '修改分组') + '" aria-label="' + (editing ? '完成修改' : '修改分组') + '">' + (editing ? '✓' : '✎') + '</button>' +
+          '<button class="secondary icon-button" data-action="addToGroup" data-group="' + escapeHtml(groupName) + '" title="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '" aria-label="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '">' + (adding ? '−' : '＋') + '</button>' +
+          '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '" aria-label="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '">' + (editing ? '✓' : '✎') + '</button>' +
         '</div>' +
       '</div>';
     }
@@ -2071,8 +2286,8 @@ class QuotesViewProvider {
       const query = isActive ? symbolSearchQuery : '';
       return '<div class="symbol-form group-symbol-form">' +
         '<div class="symbol-search-row">' +
-          '<input data-symbol-query="true" data-group="' + escapeHtml(groupName) + '" value="' + escapeHtml(query) + '" placeholder="搜索名称、代码或拼音" autocomplete="off">' +
-          '<button class="secondary icon-button add-button" data-action="confirmAddSymbol" data-group="' + escapeHtml(groupName) + '" title="添加到该分组" aria-label="添加到该分组" ' + (isActive && selectedSymbol ? '' : 'disabled') + '>＋</button>' +
+          '<input data-symbol-query="true" data-group="' + escapeHtml(groupName) + '" value="' + escapeHtml(query) + '" placeholder="' + escapeHtml(t('searchPlaceholder')) + '" autocomplete="off">' +
+          '<button class="secondary icon-button add-button" data-action="confirmAddSymbol" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('addToGroup')) + '" aria-label="' + escapeHtml(t('addToGroup')) + '" ' + (isActive && selectedSymbol ? '' : 'disabled') + '>＋</button>' +
         '</div>' +
         '<div class="symbol-results" data-symbol-results-group="' + escapeHtml(groupName) + '">' + (isActive ? renderSymbolResultsHtml() : '') + '</div>' +
       '</div>';
@@ -2083,17 +2298,17 @@ class QuotesViewProvider {
         return '';
       }
       if (symbolSearchLoading) {
-        return '<div class="symbol-result-empty">搜索中...</div>';
+        return '<div class="symbol-result-empty">' + escapeHtml(t('searchPending')) + '</div>';
       }
       if (symbolSearchError) {
         return '<div class="symbol-result-empty">' + escapeHtml(symbolSearchError) + '</div>';
       }
       if (symbolSearchResults.length === 0) {
-        return '<div class="symbol-result-empty">没有找到匹配标的</div>';
+        return '<div class="symbol-result-empty">' + escapeHtml(t('noMatches')) + '</div>';
       }
       return symbolSearchResults.map((item) => {
         const selected = selectedSymbol && selectedSymbol.code === item.code;
-        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="选择 ' + escapeHtml(item.name) + '">' +
+        return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="' + escapeHtml(t('choose') + ' ' + item.name) + '">' +
           '<span class="symbol-result-main">' + escapeHtml(item.name) + '</span>' +
           '<span class="symbol-result-code">' + escapeHtml(item.market || '') + ' ' + escapeHtml(item.code) + '</span>' +
         '</button>';
@@ -2106,11 +2321,11 @@ class QuotesViewProvider {
           const active = sort && sort.column === column;
           const icon = active ? sort.direction === 'asc' ? ' ↑' : ' ↓' : '';
           return '<div class="quote-cell ' + getColumnClass(column) + '">' +
-            '<button class="sort-button" data-action="sortColumn" data-group="' + escapeHtml(groupName) + '" data-column="' + column + '" title="按' + escapeHtml(getColumnLabel(column)) + '排序">' + escapeHtml(getColumnLabel(column)) + icon + '</button>' +
-            '<span class="column-resizer" data-column="' + escapeHtml(column) + '" title="拖动调整列宽"></span>' +
+            '<button class="sort-button" data-action="sortColumn" data-group="' + escapeHtml(groupName) + '" data-column="' + column + '" title="' + escapeHtml(t('sortByColumn') + ' ' + getColumnLabel(column)) + '">' + escapeHtml(getColumnLabel(column)) + icon + '</button>' +
+            '<span class="column-resizer" data-column="' + escapeHtml(column) + '" title="' + escapeHtml(t('dragColumnWidth')) + '"></span>' +
           '</div>';
         }).join('') +
-        (editing ? '<div class="quote-cell numeric">操作</div>' : '') +
+        (editing ? '<div class="quote-cell numeric">' + escapeHtml(t('action')) + '</div>' : '') +
       '</div>';
     }
 
@@ -2127,9 +2342,9 @@ class QuotesViewProvider {
       return '<article class="quote ' + gridClass + (highlightClass ? ' ' + highlightClass : '') + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         cells +
         (editing ? '<div class="quote-actions">' +
-          '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="上移" ' + (first ? 'disabled' : '') + '>↑</button>' +
-          '<button class="secondary icon-button" data-action="down" data-index="' + index + '" title="下移" ' + (last ? 'disabled' : '') + '>↓</button>' +
-          '<button class="secondary icon-button danger" data-action="remove" data-index="' + index + '" data-name="' + escapeHtml(quote.name) + '" title="删除标的" aria-label="删除标的">×</button>' +
+          '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="' + escapeHtml(t('moveUp')) + '" ' + (first ? 'disabled' : '') + '>↑</button>' +
+          '<button class="secondary icon-button" data-action="down" data-index="' + index + '" title="' + escapeHtml(t('moveDown')) + '" ' + (last ? 'disabled' : '') + '>↓</button>' +
+          '<button class="secondary icon-button danger" data-action="remove" data-index="' + index + '" data-name="' + escapeHtml(quote.name) + '" title="' + escapeHtml(t('deleteSymbol')) + '" aria-label="' + escapeHtml(t('deleteSymbol')) + '">×</button>' +
         '</div>' : '') +
       '</article>';
     }
@@ -2161,7 +2376,7 @@ class QuotesViewProvider {
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">预警</span>' : '') + '</div>' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">' + escapeHtml(t('alert')) + '</span>' : '') + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -2253,15 +2468,15 @@ class QuotesViewProvider {
 
     function getColumnLabel(column) {
       return {
-        name: '名称',
-        alias: '别名',
-        code: '代码',
-        price: '价格',
-        changePercent: '涨跌幅',
-        change: '涨跌额',
-        cost: '成本',
-        holding: '持仓',
-        netProfit: '净收益额'
+        name: t('name'),
+        alias: t('alias'),
+        code: t('code'),
+        price: t('price'),
+        changePercent: t('changePercent'),
+        change: t('change'),
+        cost: t('cost'),
+        holding: t('holding'),
+        netProfit: t('netProfit')
       }[column] || column;
     }
 
@@ -2383,11 +2598,14 @@ function readConfig() {
   const alerts = config.get('alerts', [])
     .map(normalizeAlertRule)
     .filter(Boolean);
+  const language = sanitizeLanguage(config.get('language', DEFAULT_LANGUAGE));
 
   return {
     groups,
     symbols,
     alerts,
+    language,
+    locale: resolveLanguage(language),
     enableAlerts: config.get('enableAlerts', true),
     enableAlertNotifications: config.get('enableAlertNotifications', true),
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
@@ -3614,6 +3832,18 @@ function getTrendColor(value, colors) {
     return colors.down;
   }
   return colors.flat;
+}
+
+function sanitizeLanguage(value) {
+  return ['auto', 'zh-CN', 'en-US'].includes(value) ? value : DEFAULT_LANGUAGE;
+}
+
+function resolveLanguage(value) {
+  const language = sanitizeLanguage(value);
+  if (language !== 'auto') {
+    return language;
+  }
+  return String(vscode.env.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
 }
 
 function sanitizeColorMode(value) {
