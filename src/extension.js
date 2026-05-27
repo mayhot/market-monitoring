@@ -507,6 +507,7 @@ class MarketMonitor {
       sortBy: this.config.sortBy,
       sortDirection: this.config.sortDirection,
       priceDecimalPlaces: this.config.priceDecimalPlaces,
+      rowHighlight: this.config.rowHighlight,
       quoteColumns: this.config.quoteColumns,
       symbolCount: this.config.symbols.length,
       defaultIndexCode: DEFAULT_INDEX_CODE,
@@ -532,6 +533,10 @@ class QuotesViewProvider {
       sortBy: 'configured',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
+      rowHighlight: {
+        upPercent: 5,
+        downPercent: 5
+      },
       quoteColumns: DEFAULT_QUOTE_COLUMNS,
       symbolCount: 0,
       defaultIndexCode: DEFAULT_INDEX_CODE,
@@ -974,6 +979,7 @@ class QuotesViewProvider {
 
     .quote {
       display: grid;
+      position: relative;
       gap: 6px;
       align-items: center;
       min-width: 0;
@@ -985,6 +991,27 @@ class QuotesViewProvider {
 
     .quote:hover {
       background: var(--surface-hover);
+    }
+
+    .quote.highlight-up::before,
+    .quote.highlight-down::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      border-radius: 0;
+      opacity: 0.46;
+      pointer-events: none;
+    }
+
+    .quote.highlight-up::before {
+      background: var(--row-highlight-up);
+    }
+
+    .quote.highlight-down::before {
+      background: var(--row-highlight-down);
     }
 
     .quote.cols-1 {
@@ -1753,7 +1780,9 @@ class QuotesViewProvider {
 
     function render(snapshot) {
       latestSnapshot = snapshot;
-      dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';}';
+      const rowHighlightUp = snapshot.colors.mode === 'none' ? '#d73a49' : snapshot.colors.up;
+      const rowHighlightDown = snapshot.colors.mode === 'none' ? '#16a34a' : snapshot.colors.down;
+      dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
       toggle.dataset.running = String(snapshot.running);
       toggle.textContent = snapshot.running ? '⏸' : '▶';
       toggle.title = snapshot.running ? '暂停' : '启动';
@@ -2089,12 +2118,13 @@ class QuotesViewProvider {
       const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
+      const highlightClass = getQuoteHighlightClass(quote, snapshot);
       const index = Number(quote.index);
       const first = itemIndex <= 0;
       const last = itemIndex >= itemCount - 1;
       const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend, editing)).join('');
 
-      return '<article class="quote ' + gridClass + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
+      return '<article class="quote ' + gridClass + (highlightClass ? ' ' + highlightClass : '') + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         cells +
         (editing ? '<div class="quote-actions">' +
           '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="上移" ' + (first ? 'disabled' : '') + '>↑</button>' +
@@ -2102,6 +2132,23 @@ class QuotesViewProvider {
           '<button class="secondary icon-button danger" data-action="remove" data-index="' + index + '" data-name="' + escapeHtml(quote.name) + '" title="删除标的" aria-label="删除标的">×</button>' +
         '</div>' : '') +
       '</article>';
+    }
+
+    function getQuoteHighlightClass(quote, snapshot) {
+      const changePercent = Number(quote.changePercent);
+      if (!Number.isFinite(changePercent)) {
+        return '';
+      }
+      const thresholds = snapshot.rowHighlight || {};
+      const upPercent = Number(thresholds.upPercent);
+      const downPercent = Number(thresholds.downPercent);
+      if (Number.isFinite(upPercent) && upPercent > 0 && changePercent >= upPercent) {
+        return 'highlight-up';
+      }
+      if (Number.isFinite(downPercent) && downPercent > 0 && changePercent <= -downPercent) {
+        return 'highlight-down';
+      }
+      return '';
     }
 
     function renderQuoteCell(column, quote, snapshot, trend, editing) {
@@ -2349,6 +2396,10 @@ function readConfig() {
     sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
+    rowHighlight: {
+      upPercent: sanitizeRowHighlightPercent(config.get('rowHighlightUpPercent', 5)),
+      downPercent: sanitizeRowHighlightPercent(config.get('rowHighlightDownPercent', 5))
+    },
     quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', DEFAULT_QUOTE_COLUMNS)),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
@@ -3625,6 +3676,14 @@ function sanitizeDecimalPlaces(value) {
     return 2;
   }
   return Math.min(6, Math.max(0, parsed));
+}
+
+function sanitizeRowHighlightPercent(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed;
 }
 
 function sanitizeQuoteColumns(value) {

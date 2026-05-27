@@ -216,6 +216,18 @@
           ],
           "description": "Color mode for rising and falling indicators."
         },
+        "marketMonitoring.rowHighlightUpPercent": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Show a subtle left row marker when quote change percentage is greater than or equal to this value. Set 0 to disable rising row markers."
+        },
+        "marketMonitoring.rowHighlightDownPercent": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Show a subtle left row marker when quote change percentage is less than or equal to the negative of this value. Set 0 to disable falling row markers."
+        },
         "marketMonitoring.quoteColumns": {
           "type": "array",
           "default": [

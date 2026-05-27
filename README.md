@@ -9,6 +9,7 @@
 - 分组支持折叠和展开。
 - 在行情面板中添加标的，并通过分组标题的编辑按钮修改名称、删除、上移、下移标的。
 - 涨跌颜色模式可配置，默认无颜色。
+- 支持按涨跌幅阈值给标的行添加低调的左侧色带标识。
 - 自定义价格小数位。
 - 标的表格列可配置，支持名称、别名、代码、价格、涨跌幅、涨跌额、成本、持仓、净收益额。
 - 表格列默认均分，最小宽度为 20px，支持拖动列名右侧边缘调整列宽。
@@ -55,6 +56,8 @@
   ],
   "marketMonitoring.priceDecimalPlaces": 2,
   "marketMonitoring.colorMode": "none",
+  "marketMonitoring.rowHighlightUpPercent": 5,
+  "marketMonitoring.rowHighlightDownPercent": 5,
   "marketMonitoring.refreshIntervalSeconds": 5,
   "marketMonitoring.onlyDuringTradingTime": true
 }
@@ -139,6 +142,10 @@
 - `none`：无颜色，涨跌指标使用普通文字颜色。
 - `redUpGreenDown`：上涨红、下跌绿。
 - `greenUpRedDown`：上涨绿、下跌红。
+
+## 行阈值标识
+
+`marketMonitoring.rowHighlightUpPercent` 和 `marketMonitoring.rowHighlightDownPercent` 控制标的行左侧色带阈值，默认均为 `5`。下跌阈值使用正数，例如 `5` 表示涨跌幅 `<= -5%` 时标识；设置为 `0` 可关闭对应方向的行标识。
 
 ## 表格列配置
 
