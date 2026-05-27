@@ -8,6 +8,8 @@ const vscode = require('vscode');
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
 const DEFAULT_GROUP = '自选';
+const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
+const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit'];
 const INDEX_SYMBOLS = [
   { code: 'sh000985', name: '中证全指', group: '指数' },
   { code: 'sh000001', name: '上证指数', group: '指数' },
@@ -53,6 +55,8 @@ function activate(context) {
       monitor.exportCsv();
     } else if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
+    } else if (message.command === 'updateQuoteColumns') {
+      monitor.updateQuoteColumns(message.columns);
     } else if (message.command === 'start') {
       monitor.start(true);
     } else if (message.command === 'stop') {
@@ -287,6 +291,17 @@ class MarketMonitor {
     this.updateViews(getMarketPhase().name);
   }
 
+  async updateQuoteColumns(columns) {
+    const nextColumns = sanitizeQuoteColumns(columns);
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    await config.update('quoteColumns', nextColumns, getConfigTarget(config, 'quoteColumns'));
+    this.config = {
+      ...this.config,
+      quoteColumns: nextColumns
+    };
+    this.updateViews(getMarketPhase().name);
+  }
+
   async importCsv() {
     const uris = await vscode.window.showOpenDialog({
       canSelectFiles: true,
@@ -517,7 +532,7 @@ class QuotesViewProvider {
       sortBy: 'configured',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
-      quoteColumns: ['name', 'price', 'changePercent'],
+      quoteColumns: DEFAULT_QUOTE_COLUMNS,
       symbolCount: 0,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: INDEX_SYMBOLS.map((symbol) => ({
@@ -706,6 +721,64 @@ class QuotesViewProvider {
 
     .group-form {
       grid-template-columns: minmax(0, 1fr) 30px;
+    }
+
+    .config-panel {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface-soft) 52%, transparent);
+    }
+
+    .config-panel[hidden] {
+      display: none;
+    }
+
+    .config-panel-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      color: var(--vscode-sideBarTitle-foreground);
+    }
+
+    .column-config-list {
+      display: grid;
+      gap: 5px;
+    }
+
+    .column-config-item {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 28px 28px;
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+    }
+
+    .column-config-item label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .column-config-item input {
+      min-height: 0;
+      width: auto;
+      margin: 0;
+    }
+
+    .config-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
     }
 
     .symbol-search-row {
@@ -1247,6 +1320,7 @@ class QuotesViewProvider {
     <input id="group-name" name="group" placeholder="新增分组" autocomplete="off">
     <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
+  <section class="config-panel" id="config-panel" hidden></section>
   <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
   <footer class="index-dock">
@@ -1258,6 +1332,7 @@ class QuotesViewProvider {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const defaultGroupName = ${JSON.stringify(DEFAULT_GROUP)};
+    const availableQuoteColumns = ${JSON.stringify(AVAILABLE_QUOTE_COLUMNS)};
     let viewState = vscode.getState() || {};
     const app = document.getElementById('app');
     const phase = document.getElementById('phase');
@@ -1268,6 +1343,7 @@ class QuotesViewProvider {
     const settings = document.getElementById('settings');
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
+    const configPanel = document.getElementById('config-panel');
     const sortHint = document.getElementById('sort-hint');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
@@ -1276,6 +1352,7 @@ class QuotesViewProvider {
     let editingGroups = viewState.editingGroups || {};
     let collapsedGroups = viewState.collapsedGroups || {};
     let addingGroups = viewState.addingGroups || {};
+    let settingsOpen = Boolean(viewState.settingsOpen);
     let tableSort = viewState.tableSort || {};
     let columnWidths = viewState.columnWidths || {};
     let resizingColumn;
@@ -1293,7 +1370,11 @@ class QuotesViewProvider {
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
     importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
     exportCsv.addEventListener('click', () => vscode.postMessage({ command: 'exportCsv' }));
-    settings.addEventListener('click', () => vscode.postMessage({ command: 'settings' }));
+    settings.addEventListener('click', () => {
+      settingsOpen = !settingsOpen;
+      persistViewState();
+      renderConfigPanel(latestSnapshot);
+    });
     toggle.addEventListener('click', () => {
       const running = toggle.dataset.running === 'true';
       vscode.postMessage({ command: running ? 'stop' : 'start' });
@@ -1444,7 +1525,38 @@ class QuotesViewProvider {
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
         }
+      } else if (action === 'moveQuoteColumn') {
+        const column = button.dataset.column || '';
+        const direction = button.dataset.direction === 'up' ? -1 : 1;
+        updateQuoteColumns(moveQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, column, direction));
+      } else if (action === 'resetQuoteColumns') {
+        updateQuoteColumns(['name', 'price', 'changePercent']);
+      } else if (action === 'openNativeSettings') {
+        vscode.postMessage({ command: 'settings' });
       }
+    });
+    configPanel.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) {
+        return;
+      }
+      const action = button.dataset.action;
+      if (action === 'moveQuoteColumn') {
+        const column = button.dataset.column || '';
+        const direction = button.dataset.direction === 'up' ? -1 : 1;
+        updateQuoteColumns(moveQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, column, direction));
+      } else if (action === 'resetQuoteColumns') {
+        updateQuoteColumns(['name', 'price', 'changePercent']);
+      } else if (action === 'openNativeSettings') {
+        vscode.postMessage({ command: 'settings' });
+      }
+    });
+    configPanel.addEventListener('change', (event) => {
+      const input = event.target.closest('input[data-column]');
+      if (!input) {
+        return;
+      }
+      updateQuoteColumns(toggleQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, input.dataset.column, input.checked));
     });
     app.addEventListener('pointerdown', (event) => {
       const handle = event.target.closest('.column-resizer');
@@ -1646,6 +1758,7 @@ class QuotesViewProvider {
       toggle.textContent = snapshot.running ? '⏸' : '▶';
       toggle.title = snapshot.running ? '暂停' : '启动';
       toggle.setAttribute('aria-label', toggle.title);
+      renderConfigPanel(snapshot);
 
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? '刷新中 · ' : '') + snapshot.phaseName + extra;
@@ -1677,6 +1790,95 @@ class QuotesViewProvider {
         && activeElement
         && app.contains(activeElement)
         && Boolean(activeElement.closest('input[data-field], input[data-group-name], input[data-symbol-query], .group-symbol-form'));
+    }
+
+    function renderConfigPanel(snapshot) {
+      configPanel.hidden = !settingsOpen;
+      if (!settingsOpen) {
+        configPanel.innerHTML = '';
+        return;
+      }
+
+      const columns = normalizeQuoteColumns(snapshot && snapshot.quoteColumns);
+      const orderedColumns = getConfigPanelColumns(columns);
+      configPanel.innerHTML = '<div class="config-panel-title">' +
+          '<span>表格列</span>' +
+          '<button class="secondary icon-button" data-action="openNativeSettings" title="打开 VS Code 设置" aria-label="打开 VS Code 设置">⚙</button>' +
+        '</div>' +
+        '<div class="column-config-list">' +
+          orderedColumns.map((column) => renderColumnConfigItem(column, columns)).join('') +
+        '</div>' +
+        '<div class="config-actions">' +
+          '<button class="secondary icon-button" data-action="resetQuoteColumns" title="恢复默认列" aria-label="恢复默认列">↺</button>' +
+        '</div>';
+    }
+
+    function getConfigPanelColumns(columns) {
+      const visible = normalizeQuoteColumns(columns);
+      const hidden = availableQuoteColumns.filter((column) => !visible.includes(column));
+      return [...visible, ...hidden];
+    }
+
+    function renderColumnConfigItem(column, columns) {
+      const visible = columns.includes(column);
+      const visibleIndex = columns.indexOf(column);
+      const canMoveUp = visible && visibleIndex > 0;
+      const canMoveDown = visible && visibleIndex >= 0 && visibleIndex < columns.length - 1;
+      const canHide = !visible || columns.length > 1;
+      return '<div class="column-config-item">' +
+        '<input type="checkbox" data-column="' + escapeHtml(column) + '" title="显示' + escapeHtml(getColumnLabel(column)) + '" aria-label="显示' + escapeHtml(getColumnLabel(column)) + '" ' + (visible ? 'checked ' : '') + (canHide ? '' : 'disabled') + '>' +
+        '<label>' + escapeHtml(getColumnLabel(column)) + '</label>' +
+        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="up" title="上移" aria-label="上移" ' + (canMoveUp ? '' : 'disabled') + '>↑</button>' +
+        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="down" title="下移" aria-label="下移" ' + (canMoveDown ? '' : 'disabled') + '>↓</button>' +
+      '</div>';
+    }
+
+    function updateQuoteColumns(columns) {
+      const normalized = normalizeQuoteColumns(columns);
+      vscode.postMessage({
+        command: 'updateQuoteColumns',
+        columns: normalized
+      });
+      if (latestSnapshot) {
+        latestSnapshot = {
+          ...latestSnapshot,
+          quoteColumns: normalized
+        };
+        renderConfigPanel(latestSnapshot);
+        if (!shouldFreezeQuoteRender()) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          applyColumnWidths();
+        }
+      }
+    }
+
+    function toggleQuoteColumn(currentColumns, column, checked) {
+      const columns = normalizeQuoteColumns(currentColumns);
+      if (checked) {
+        return columns.includes(column) ? columns : [...columns, column];
+      }
+      if (columns.length <= 1) {
+        return columns;
+      }
+      return columns.filter((item) => item !== column);
+    }
+
+    function moveQuoteColumn(currentColumns, column, direction) {
+      const columns = normalizeQuoteColumns(currentColumns);
+      const index = columns.indexOf(column);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= columns.length) {
+        return columns;
+      }
+      const nextColumns = [...columns];
+      [nextColumns[index], nextColumns[nextIndex]] = [nextColumns[nextIndex], nextColumns[index]];
+      return nextColumns;
+    }
+
+    function normalizeQuoteColumns(columns) {
+      const source = Array.isArray(columns) && columns.length > 0 ? columns : ['name', 'price', 'changePercent'];
+      const normalized = source.filter((column, index) => availableQuoteColumns.includes(column) && source.indexOf(column) === index);
+      return normalized.length > 0 ? normalized : ['name', 'price', 'changePercent'];
     }
 
     function renderIndex(snapshot) {
@@ -2089,6 +2291,7 @@ class QuotesViewProvider {
         editingGroups,
         collapsedGroups,
         addingGroups,
+        settingsOpen,
         tableSort,
         columnWidths
       };
@@ -2146,7 +2349,7 @@ function readConfig() {
     sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
-    quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', ['name', 'price', 'changePercent'])),
+    quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', DEFAULT_QUOTE_COLUMNS)),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
@@ -3425,8 +3628,8 @@ function sanitizeDecimalPlaces(value) {
 }
 
 function sanitizeQuoteColumns(value) {
-  const allowed = new Set(['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit']);
-  const defaults = ['name', 'price', 'changePercent'];
+  const allowed = new Set(AVAILABLE_QUOTE_COLUMNS);
+  const defaults = DEFAULT_QUOTE_COLUMNS;
   if (!Array.isArray(value)) {
     return defaults;
   }
