@@ -7,6 +7,7 @@ const vscode = require('vscode');
 
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
+const QUOTE_CACHE_KEY = 'quoteCache.v1';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
@@ -109,11 +110,13 @@ class MarketMonitor {
     this.statusBarItem.command = 'marketMonitoring.refresh';
     this.context.subscriptions.push(this.statusBarItem);
     this.running = false;
-    this.lastQuotes = [];
+    const cachedSnapshot = readCachedQuoteSnapshot(this.context.globalState);
+    this.lastQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
     this.lastError = '';
-    this.lastUpdatedAt = '';
+    this.lastUpdatedAt = cachedSnapshot.updatedAt;
+    this.lastUpdatedDate = cachedSnapshot.updatedDate;
     this.isRefreshing = false;
     this.config = readConfig();
     this.provider.update(this.createSnapshot('未启动'));
@@ -428,7 +431,11 @@ class MarketMonitor {
 
     const phase = getMarketPhase();
     const quoteSymbols = mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS);
-    const shouldFetch = force || !this.config.onlyDuringTradingTime || phase.isActive || needsQuoteSnapshot(quoteSymbols, this.lastQuotes);
+    const shouldRefreshCachedSnapshot = this.config.onlyDuringTradingTime
+      && !phase.isActive
+      && quoteSymbols.length > 0
+      && this.lastUpdatedDate !== getShanghaiDateString();
+    const shouldFetch = force || !this.config.onlyDuringTradingTime || phase.isActive || needsQuoteSnapshot(quoteSymbols, this.lastQuotes) || shouldRefreshCachedSnapshot;
 
     if (!shouldFetch) {
       this.lastError = '';
@@ -441,11 +448,14 @@ class MarketMonitor {
     this.updateViews(phase.name, true);
 
     try {
-      this.lastQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs);
+      const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs);
+      this.lastQuotes = mergeWithPreviousQuotes(fetchedQuotes, this.lastQuotes);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      this.lastUpdatedDate = getShanghaiDateString();
       this.triggeredAlerts = this.config.enableAlerts ? evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces) : [];
       this.notifyAlerts(this.triggeredAlerts);
       this.lastError = '';
+      await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
     } catch (error) {
       this.lastError = getErrorMessage(error);
       this.output.appendLine(`[${new Date().toISOString()}] ${this.lastError}`);
@@ -3131,6 +3141,55 @@ function isUsableQuote(quote) {
   return Boolean(quote && quote.price !== null);
 }
 
+function readCachedQuoteSnapshot(globalState) {
+  const value = globalState.get(QUOTE_CACHE_KEY);
+  if (!value || !Array.isArray(value.quotes)) {
+    return { quotes: [], updatedAt: '', updatedDate: '' };
+  }
+
+  return {
+    quotes: value.quotes.map(normalizeCachedQuote).filter(Boolean),
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
+    updatedDate: typeof value.updatedDate === 'string' ? value.updatedDate : ''
+  };
+}
+
+async function writeCachedQuoteSnapshot(globalState, quotes, updatedAt, updatedDate) {
+  await globalState.update(QUOTE_CACHE_KEY, {
+    updatedAt,
+    updatedDate,
+    quotes: quotes.filter(isUsableQuote).map((quote) => ({
+      code: quote.code,
+      price: quote.price,
+      previousClose: quote.previousClose,
+      change: quote.change,
+      changePercent: quote.changePercent,
+      time: quote.time,
+      status: quote.status
+    }))
+  });
+}
+
+function normalizeCachedQuote(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const code = normalizeCode(value.code);
+  if (!code) {
+    return null;
+  }
+
+  return {
+    code,
+    price: optionalNumber(value.price),
+    previousClose: optionalNumber(value.previousClose),
+    change: optionalNumber(value.change),
+    changePercent: optionalNumber(value.changePercent),
+    time: typeof value.time === 'string' ? value.time : '',
+    status: typeof value.status === 'string' ? value.status : ''
+  };
+}
+
 function evaluateAlerts(quotes, rules, priceDecimalPlaces) {
   if (!rules || rules.length === 0) {
     return [];
@@ -3312,6 +3371,26 @@ function needsQuoteSnapshot(symbols, quotes) {
 
   const quotedCodes = new Set(quotes.map((quote) => quote.code));
   return symbols.some((symbol) => !quotedCodes.has(symbol.code));
+}
+
+function mergeWithPreviousQuotes(quotes, previousQuotes) {
+  const previousByCode = new Map(previousQuotes.map((quote) => [quote.code, quote]));
+  return quotes.map((quote) => {
+    const previous = previousByCode.get(quote.code);
+    if (isUsableQuote(quote) || !isUsableQuote(previous)) {
+      return quote;
+    }
+
+    return {
+      ...quote,
+      price: previous.price,
+      previousClose: previous.previousClose,
+      change: previous.change,
+      changePercent: previous.changePercent,
+      time: previous.time,
+      status: previous.status
+    };
+  });
 }
 
 function buildIndexQuotes(quotes) {
@@ -3969,6 +4048,17 @@ function getMarketPhase() {
   }
 
   return { name: '非交易时段', isActive: false };
+}
+
+function getShanghaiDateString() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function getShanghaiTimeParts() {
