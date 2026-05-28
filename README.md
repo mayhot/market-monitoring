@@ -57,6 +57,7 @@
   ],
   "marketMonitoring.groupSummaryMetrics": [],
   "marketMonitoring.priceDecimalPlaces": 2,
+  "marketMonitoring.compactLargeAmounts": false,
   "marketMonitoring.language": "auto",
   "marketMonitoring.colorMode": "none",
   "marketMonitoring.rowHighlightUpPercent": 5,
@@ -135,6 +136,8 @@
 ## 价格小数位
 
 `marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数，默认 `2`，支持 `0-6`。
+
+`marketMonitoring.compactLargeAmounts` 控制超过 `10000` 的金额是否以 `W` 为单位展示，默认 `false`，即展示完整数值。开启后会影响分组汇总和导出 CSV 中的汇总金额。
 
 ## 语言切换
 

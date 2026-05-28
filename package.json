@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "niangao",
   "icon": "resources/icon.png",
   "engines": {
@@ -200,6 +200,11 @@
           "minimum": 0,
           "maximum": 6,
           "description": "Decimal places used for quote price display."
+        },
+        "marketMonitoring.compactLargeAmounts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Display values greater than 10000 using W units in group summaries and exported summary rows."
         },
         "marketMonitoring.language": {
           "type": "string",

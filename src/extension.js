@@ -396,7 +396,7 @@ class MarketMonitor {
 
   async exportCsv() {
     const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, 'configured', 'asc');
-    const rows = buildCsvRows(groups, this.config.priceDecimalPlaces);
+    const rows = buildCsvRows(groups, this.config.priceDecimalPlaces, this.config.compactLargeAmounts);
     if (rows.length <= 1) {
       vscode.window.showInformationMessage('暂无可导出的标的数据');
       return;
@@ -544,6 +544,7 @@ class MarketMonitor {
       sortBy: this.config.sortBy,
       sortDirection: this.config.sortDirection,
       priceDecimalPlaces: this.config.priceDecimalPlaces,
+      compactLargeAmounts: this.config.compactLargeAmounts,
       rowHighlight: this.config.rowHighlight,
       quoteColumns: this.config.quoteColumns,
       groupSummaryMetrics: this.config.groupSummaryMetrics,
@@ -573,6 +574,7 @@ class QuotesViewProvider {
       sortBy: 'configured',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
+      compactLargeAmounts: false,
       rowHighlight: {
         upPercent: 5,
         downPercent: 5
@@ -1377,9 +1379,12 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
-    .quote.refreshing-quote,
     .refreshing-index {
       animation: market-monitoring-breathe 1.25s ease-in-out infinite;
+    }
+
+    .group-name.refresh-succeeded {
+      animation: market-monitoring-group-flash 900ms ease-out 1;
     }
 
     @keyframes market-monitoring-breathe {
@@ -1390,6 +1395,23 @@ class QuotesViewProvider {
 
       50% {
         opacity: 0.62;
+      }
+    }
+
+    @keyframes market-monitoring-group-flash {
+      0% {
+        color: var(--vscode-sideBarTitle-foreground);
+        text-shadow: none;
+      }
+
+      35% {
+        color: var(--focus);
+        text-shadow: 0 0 8px color-mix(in srgb, var(--focus) 42%, transparent);
+      }
+
+      100% {
+        color: var(--vscode-sideBarTitle-foreground);
+        text-shadow: none;
       }
     }
 
@@ -1594,6 +1616,7 @@ class QuotesViewProvider {
     let symbolSearchLoading = false;
     let symbolSearchError = '';
     let latestSnapshot;
+    let lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
     importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
@@ -2001,6 +2024,11 @@ class QuotesViewProvider {
     }
 
     function render(snapshot) {
+      const flashGroupNames = Boolean(latestSnapshot)
+        && !snapshot.loading
+        && !snapshot.error
+        && snapshot.updatedAt
+        && snapshot.updatedAt !== lastFlashedUpdatedAt;
       latestSnapshot = snapshot;
       locale = snapshot.locale || 'zh-CN';
       document.documentElement.lang = locale;
@@ -2023,6 +2051,10 @@ class QuotesViewProvider {
 
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
+        if (flashGroupNames) {
+          lastFlashedUpdatedAt = snapshot.updatedAt;
+          persistViewState();
+        }
         return;
       }
 
@@ -2033,9 +2065,13 @@ class QuotesViewProvider {
         return;
       }
 
-      app.innerHTML = renderGroups(snapshot.groups, snapshot);
+      app.innerHTML = renderGroups(snapshot.groups, snapshot, flashGroupNames);
       applyColumnWidths();
       renderIndex(snapshot);
+      if (flashGroupNames) {
+        lastFlashedUpdatedAt = snapshot.updatedAt;
+        persistViewState();
+      }
     }
 
     function shouldFreezeQuoteRender() {
@@ -2268,7 +2304,7 @@ class QuotesViewProvider {
       indexQuote.innerHTML = '<span class="index-price">' + price + '</span> <span class="quote-change ' + trend + '">' + percent + '</span>';
     }
 
-    function renderGroups(groups, snapshot) {
+    function renderGroups(groups, snapshot, flashGroupNames = false) {
       if (!groups || groups.length === 0) {
         return '<div class="empty">' + escapeHtml(t('noSymbols')) + '</div>';
       }
@@ -2282,7 +2318,7 @@ class QuotesViewProvider {
         const sortedItems = editing ? group.items : sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
-        const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, snapshot.loading, itemIndex, sortedItems.length)).join('');
+        const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, sortedItems.length)).join('');
         const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics);
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
@@ -2294,7 +2330,7 @@ class QuotesViewProvider {
           '<div class="group-title">' +
             '<span class="group-title-main">' +
               '<button class="secondary icon-button" data-action="toggleGroup" data-group="' + escapeHtml(group.name) + '" title="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '" aria-label="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '">' + (collapsed ? '›' : '⌄') + '</button>' +
-              '<span class="group-name">' + escapeHtml(group.name) + '</span>' +
+              '<span class="group-name' + (flashGroupNames ? ' refresh-succeeded' : '') + '">' + escapeHtml(group.name) + '</span>' +
             '</span>' +
             '<span class="group-title-actions">' +
               '<span class="group-stats">' +
@@ -2320,11 +2356,11 @@ class QuotesViewProvider {
       const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
       const cells = visibleMetrics.map((metric) => {
         if (metric === 'totalAssets') {
-          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets);
+          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets, snapshot.compactLargeAmounts);
           return '<span title="' + escapeHtml(t('totalAssets')) + '">' + escapeHtml(assets) + '</span>';
         }
         if (metric === 'dailyProfit') {
-          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit);
+          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit, snapshot.compactLargeAmounts);
           return '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfit')) + '">' + escapeHtml(profit) + '</span>';
         }
         if (metric === 'dailyProfitPercent') {
@@ -2375,23 +2411,23 @@ class QuotesViewProvider {
       };
     }
 
-    function formatLargeAmount(value) {
+    function formatLargeAmount(value, compact) {
       const amount = Number(value);
       if (!Number.isFinite(amount)) {
         return '--';
       }
-      if (Math.abs(amount) > 10000) {
-        return (amount / 10000).toFixed(2) + 'W';
+      if (compact && Math.abs(amount) > 10000) {
+        return formatDecimal(amount / 10000, 2) + 'W';
       }
       return formatDecimal(amount, 2);
     }
 
-    function formatSignedLargeAmount(value) {
+    function formatSignedLargeAmount(value, compact) {
       const amount = Number(value);
       if (!Number.isFinite(amount)) {
         return '--';
       }
-      const formatted = formatLargeAmount(Math.abs(amount));
+      const formatted = formatLargeAmount(Math.abs(amount), compact);
       if (amount > 0) {
         return '+' + formatted;
       }
@@ -2463,7 +2499,7 @@ class QuotesViewProvider {
       '</div>';
     }
 
-    function renderQuote(quote, snapshot, editing, columns, gridClass, loading, itemIndex, itemCount) {
+    function renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, itemCount) {
       const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
@@ -2473,7 +2509,7 @@ class QuotesViewProvider {
       const last = itemIndex >= itemCount - 1;
       const cells = columns.map((column) => renderQuoteCell(column, quote, snapshot, trend, editing)).join('');
 
-      return '<article class="quote ' + gridClass + (highlightClass ? ' ' + highlightClass : '') + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + (loading && quote.code ? ' refreshing-quote' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
+      return '<article class="quote ' + gridClass + (highlightClass ? ' ' + highlightClass : '') + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         cells +
         (editing ? '<div class="quote-actions">' +
           '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="' + escapeHtml(t('moveUp')) + '" ' + (first ? 'disabled' : '') + '>↑</button>' +
@@ -2697,7 +2733,8 @@ class QuotesViewProvider {
         addingGroups,
         settingsOpen,
         tableSort,
-        columnWidths
+        columnWidths,
+        lastFlashedUpdatedAt
       };
       vscode.setState(viewState);
     }
@@ -2756,6 +2793,7 @@ function readConfig() {
     sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
+    compactLargeAmounts: Boolean(config.get('compactLargeAmounts', false)),
     rowHighlight: {
       upPercent: sanitizeRowHighlightPercent(config.get('rowHighlightUpPercent', 5)),
       downPercent: sanitizeRowHighlightPercent(config.get('rowHighlightDownPercent', 5))
@@ -3652,7 +3690,7 @@ function parseOptionalImportInteger(value) {
     : { ok: false, value: null };
 }
 
-function buildCsvRows(groups, priceDecimalPlaces) {
+function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
   const rows = [[
     '分组',
     '名称',
@@ -3692,9 +3730,9 @@ function buildCsvRows(groups, priceDecimalPlaces) {
       '汇总',
       '',
       '',
-      formatOptionalLargeAmount(summary.totalAssets),
+      formatOptionalLargeAmount(summary.totalAssets, compactLargeAmounts),
       formatOptionalSignedPercent(summary.dailyProfitPercent),
-      formatOptionalSignedLargeAmount(summary.dailyProfit),
+      formatOptionalSignedLargeAmount(summary.dailyProfit, compactLargeAmounts),
       '',
       '',
       ''
@@ -3798,7 +3836,7 @@ function formatOptionalSignedPercent(value) {
   return `${Number(value) > 0 ? '+' : ''}${formatted}%`;
 }
 
-function formatOptionalLargeAmount(value) {
+function formatOptionalLargeAmount(value, compact = false) {
   if (value === null || value === undefined) {
     return '';
   }
@@ -3806,14 +3844,14 @@ function formatOptionalLargeAmount(value) {
   if (!Number.isFinite(amount)) {
     return '';
   }
-  if (Math.abs(amount) > 10000) {
+  if (compact && Math.abs(amount) > 10000) {
     return `${formatDecimalTrimmed(amount / 10000, 2)}W`;
   }
   return formatDecimalTrimmed(amount, 2);
 }
 
-function formatOptionalSignedLargeAmount(value) {
-  const formatted = formatOptionalLargeAmount(value);
+function formatOptionalSignedLargeAmount(value, compact = false) {
+  const formatted = formatOptionalLargeAmount(value, compact);
   if (!formatted) {
     return '';
   }
