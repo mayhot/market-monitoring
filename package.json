@@ -4,6 +4,11 @@
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
   "version": "0.1.7",
   "publisher": "niangao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mayhot/market-monitoring.git"
+  },
   "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.85.0"
