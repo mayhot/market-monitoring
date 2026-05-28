@@ -11,6 +11,8 @@ const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit'];
+const DEFAULT_GROUP_SUMMARY_METRICS = [];
+const AVAILABLE_GROUP_SUMMARY_METRICS = ['totalAssets', 'dailyProfit', 'dailyProfitPercent'];
 const LANGUAGE_LABELS = {
   auto: 'Auto',
   'zh-CN': '中文',
@@ -63,6 +65,8 @@ function activate(context) {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
     } else if (message.command === 'updateQuoteColumns') {
       monitor.updateQuoteColumns(message.columns);
+    } else if (message.command === 'updateGroupSummaryMetrics') {
+      monitor.updateGroupSummaryMetrics(message.metrics);
     } else if (message.command === 'updateLanguage') {
       monitor.updateLanguage(message.language);
     } else if (message.command === 'start') {
@@ -310,6 +314,17 @@ class MarketMonitor {
     this.updateViews(getMarketPhase().name);
   }
 
+  async updateGroupSummaryMetrics(metrics) {
+    const nextMetrics = sanitizeGroupSummaryMetrics(metrics);
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    await config.update('groupSummaryMetrics', nextMetrics, getConfigTarget(config, 'groupSummaryMetrics'));
+    this.config = {
+      ...this.config,
+      groupSummaryMetrics: nextMetrics
+    };
+    this.updateViews(getMarketPhase().name);
+  }
+
   async updateLanguage(language) {
     const nextLanguage = sanitizeLanguage(language);
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
@@ -531,6 +546,7 @@ class MarketMonitor {
       priceDecimalPlaces: this.config.priceDecimalPlaces,
       rowHighlight: this.config.rowHighlight,
       quoteColumns: this.config.quoteColumns,
+      groupSummaryMetrics: this.config.groupSummaryMetrics,
       symbolCount: this.config.symbols.length,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
@@ -562,6 +578,7 @@ class QuotesViewProvider {
         downPercent: 5
       },
       quoteColumns: DEFAULT_QUOTE_COLUMNS,
+      groupSummaryMetrics: DEFAULT_GROUP_SUMMARY_METRICS,
       symbolCount: 0,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: INDEX_SYMBOLS.map((symbol) => ({
@@ -779,6 +796,11 @@ class QuotesViewProvider {
       gap: 5px;
     }
 
+    .summary-config-list {
+      display: grid;
+      gap: 5px;
+    }
+
     .config-select-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, auto);
@@ -807,6 +829,31 @@ class QuotesViewProvider {
     }
 
     .column-config-item input {
+      min-height: 0;
+      width: auto;
+      margin: 0;
+    }
+
+    .summary-config-item {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+    }
+
+    .summary-config-item label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .summary-config-item input {
       min-height: 0;
       width: auto;
       margin: 0;
@@ -1124,8 +1171,8 @@ class QuotesViewProvider {
     }
 
     .group-summary {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
       gap: 10px;
       padding: 7px 8px;
       border-top: 1px solid var(--border);
@@ -1138,6 +1185,11 @@ class QuotesViewProvider {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      text-align: right;
+    }
+
+    .group-summary > span:first-child {
+      text-align: left;
     }
 
     .sort-button {
@@ -1392,6 +1444,7 @@ class QuotesViewProvider {
     const vscode = acquireVsCodeApi();
     const defaultGroupName = ${JSON.stringify(DEFAULT_GROUP)};
     const availableQuoteColumns = ${JSON.stringify(AVAILABLE_QUOTE_COLUMNS)};
+    const availableGroupSummaryMetrics = ${JSON.stringify(AVAILABLE_GROUP_SUMMARY_METRICS)};
     const languageLabels = ${JSON.stringify(LANGUAGE_LABELS)};
     const i18n = {
       'zh-CN': {
@@ -1418,6 +1471,11 @@ class QuotesViewProvider {
         collapse: '折叠',
         currentAssets: '当前总资产',
         dailyProfitSummary: '按涨跌额 * 持仓汇总',
+        groupSummary: '分组汇总',
+        showMetric: '显示',
+        totalAssets: '总资产',
+        dailyProfit: '今日收益',
+        dailyProfitPercent: '今日收益率',
         groupName: '分组名称',
         saveGroupName: '保存分组名称',
         collapseAdd: '收起添加',
@@ -1469,6 +1527,11 @@ class QuotesViewProvider {
         collapse: 'Collapse',
         currentAssets: 'Current assets',
         dailyProfitSummary: 'Summary by price change * holding',
+        groupSummary: 'Group summary',
+        showMetric: 'Show',
+        totalAssets: 'Total assets',
+        dailyProfit: 'Today profit',
+        dailyProfitPercent: 'Today profit %',
         groupName: 'Group name',
         saveGroupName: 'Save group name',
         collapseAdd: 'Collapse add form',
@@ -1712,6 +1775,8 @@ class QuotesViewProvider {
         updateQuoteColumns(moveQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, column, direction));
       } else if (action === 'resetQuoteColumns') {
         updateQuoteColumns(['name', 'price', 'changePercent']);
+      } else if (action === 'resetGroupSummaryMetrics') {
+        updateGroupSummaryMetrics([]);
       } else if (action === 'openNativeSettings') {
         vscode.postMessage({ command: 'settings' });
       }
@@ -1723,10 +1788,15 @@ class QuotesViewProvider {
         return;
       }
       const input = event.target.closest('input[data-column]');
-      if (!input) {
+      if (input) {
+        updateQuoteColumns(toggleQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, input.dataset.column, input.checked));
         return;
       }
-      updateQuoteColumns(toggleQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, input.dataset.column, input.checked));
+
+      const metricInput = event.target.closest('input[data-summary-metric]');
+      if (metricInput) {
+        updateGroupSummaryMetrics(toggleGroupSummaryMetric(latestSnapshot && latestSnapshot.groupSummaryMetrics, metricInput.dataset.summaryMetric, metricInput.checked));
+      }
     });
     app.addEventListener('pointerdown', (event) => {
       const handle = event.target.closest('.column-resizer');
@@ -2020,6 +2090,7 @@ class QuotesViewProvider {
 
       const columns = normalizeQuoteColumns(snapshot && snapshot.quoteColumns);
       const orderedColumns = getConfigPanelColumns(columns);
+      const groupSummaryMetrics = normalizeGroupSummaryMetrics(snapshot && snapshot.groupSummaryMetrics);
       const selectedLanguage = snapshot && snapshot.language ? snapshot.language : 'auto';
       configPanel.innerHTML = '<div class="config-panel-title">' +
           '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
@@ -2031,6 +2102,12 @@ class QuotesViewProvider {
             ['auto', 'zh-CN', 'en-US'].map((language) => '<option value="' + language + '"' + (language === selectedLanguage ? ' selected' : '') + '>' + escapeHtml(getLanguageLabel(language)) + '</option>').join('') +
           '</select>' +
         '</label>' +
+        '<div class="config-panel-title">' +
+          '<span>' + escapeHtml(t('groupSummary')) + '</span>' +
+        '</div>' +
+        '<div class="summary-config-list">' +
+          availableGroupSummaryMetrics.map((metric) => renderGroupSummaryMetricItem(metric, groupSummaryMetrics)).join('') +
+        '</div>' +
         '<div class="config-panel-title">' +
           '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
         '</div>' +
@@ -2062,6 +2139,14 @@ class QuotesViewProvider {
       '</div>';
     }
 
+    function renderGroupSummaryMetricItem(metric, metrics) {
+      const visible = metrics.includes(metric);
+      return '<div class="summary-config-item">' +
+        '<input type="checkbox" data-summary-metric="' + escapeHtml(metric) + '" title="' + escapeHtml(t('showMetric') + ' ' + getGroupSummaryMetricLabel(metric)) + '" aria-label="' + escapeHtml(t('showMetric') + ' ' + getGroupSummaryMetricLabel(metric)) + '" ' + (visible ? 'checked ' : '') + '>' +
+        '<label>' + escapeHtml(getGroupSummaryMetricLabel(metric)) + '</label>' +
+      '</div>';
+    }
+
     function updateQuoteColumns(columns) {
       const normalized = normalizeQuoteColumns(columns);
       vscode.postMessage({
@@ -2072,6 +2157,25 @@ class QuotesViewProvider {
         latestSnapshot = {
           ...latestSnapshot,
           quoteColumns: normalized
+        };
+        renderConfigPanel(latestSnapshot);
+        if (!shouldFreezeQuoteRender()) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          applyColumnWidths();
+        }
+      }
+    }
+
+    function updateGroupSummaryMetrics(metrics) {
+      const normalized = normalizeGroupSummaryMetrics(metrics);
+      vscode.postMessage({
+        command: 'updateGroupSummaryMetrics',
+        metrics: normalized
+      });
+      if (latestSnapshot) {
+        latestSnapshot = {
+          ...latestSnapshot,
+          groupSummaryMetrics: normalized
         };
         renderConfigPanel(latestSnapshot);
         if (!shouldFreezeQuoteRender()) {
@@ -2119,10 +2223,25 @@ class QuotesViewProvider {
       return nextColumns;
     }
 
+    function toggleGroupSummaryMetric(currentMetrics, metric, checked) {
+      const metrics = normalizeGroupSummaryMetrics(currentMetrics);
+      if (checked) {
+        return metrics.includes(metric) ? metrics : [...metrics, metric];
+      }
+      return metrics.filter((item) => item !== metric);
+    }
+
     function normalizeQuoteColumns(columns) {
       const source = Array.isArray(columns) && columns.length > 0 ? columns : ['name', 'price', 'changePercent'];
       const normalized = source.filter((column, index) => availableQuoteColumns.includes(column) && source.indexOf(column) === index);
       return normalized.length > 0 ? normalized : ['name', 'price', 'changePercent'];
+    }
+
+    function normalizeGroupSummaryMetrics(metrics) {
+      if (!Array.isArray(metrics)) {
+        return [];
+      }
+      return metrics.filter((metric, index) => availableGroupSummaryMetrics.includes(metric) && metrics.indexOf(metric) === index);
     }
 
     function renderIndex(snapshot) {
@@ -2164,7 +2283,7 @@ class QuotesViewProvider {
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
         const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, snapshot.loading, itemIndex, sortedItems.length)).join('');
-        const summary = collapsed ? '' : renderGroupSummary(group.items);
+        const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics);
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
@@ -2191,17 +2310,32 @@ class QuotesViewProvider {
       }).join('');
     }
 
-    function renderGroupSummary(items) {
+    function renderGroupSummary(items, metrics) {
+      const visibleMetrics = normalizeGroupSummaryMetrics(metrics);
+      if (visibleMetrics.length === 0) {
+        return '';
+      }
+
       const summary = calculateGroupPortfolioSummary(items);
-      const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets);
       const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
-      const profitText = summary.dailyProfit === null
-        ? ''
-        : formatSignedLargeAmount(summary.dailyProfit) + (summary.dailyProfitPercent === null ? '' : ' ' + formatSigned(summary.dailyProfitPercent, 2) + '%');
+      const cells = visibleMetrics.map((metric) => {
+        if (metric === 'totalAssets') {
+          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets);
+          return '<span title="' + escapeHtml(t('totalAssets')) + '">' + escapeHtml(assets) + '</span>';
+        }
+        if (metric === 'dailyProfit') {
+          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit);
+          return '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfit')) + '">' + escapeHtml(profit) + '</span>';
+        }
+        if (metric === 'dailyProfitPercent') {
+          const percent = summary.dailyProfitPercent === null ? '--' : formatSigned(summary.dailyProfitPercent, 2) + '%';
+          return '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfitPercent')) + '">' + escapeHtml(percent) + '</span>';
+        }
+        return '';
+      }).join('');
 
       return '<div class="group-summary">' +
-        '<span title="' + escapeHtml(t('currentAssets')) + '">' + assets + '</span>' +
-        '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfitSummary')) + '">' + escapeHtml(profitText) + '</span>' +
+        cells +
       '</div>';
     }
 
@@ -2480,6 +2614,14 @@ class QuotesViewProvider {
       }[column] || column;
     }
 
+    function getGroupSummaryMetricLabel(metric) {
+      return {
+        totalAssets: t('totalAssets'),
+        dailyProfit: t('dailyProfit'),
+        dailyProfitPercent: t('dailyProfitPercent')
+      }[metric] || metric;
+    }
+
     function getColumnClass(column) {
       return column === 'name' || column === 'alias' || column === 'code' ? '' : 'numeric';
     }
@@ -2619,6 +2761,7 @@ function readConfig() {
       downPercent: sanitizeRowHighlightPercent(config.get('rowHighlightDownPercent', 5))
     },
     quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', DEFAULT_QUOTE_COLUMNS)),
+    groupSummaryMetrics: sanitizeGroupSummaryMetrics(config.get('groupSummaryMetrics', DEFAULT_GROUP_SUMMARY_METRICS)),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
@@ -3926,6 +4069,14 @@ function sanitizeQuoteColumns(value) {
   const normalized = value.map((column) => column === 'identity' ? 'name' : column);
   const columns = normalized.filter((column, index) => allowed.has(column) && normalized.indexOf(column) === index);
   return columns.length > 0 ? columns : defaults;
+}
+
+function sanitizeGroupSummaryMetrics(value) {
+  const allowed = new Set(AVAILABLE_GROUP_SUMMARY_METRICS);
+  if (!Array.isArray(value)) {
+    return DEFAULT_GROUP_SUMMARY_METRICS;
+  }
+  return value.filter((metric, index) => allowed.has(metric) && value.indexOf(metric) === index);
 }
 
 function createNonce() {

@@ -55,6 +55,7 @@
     "price",
     "changePercent"
   ],
+  "marketMonitoring.groupSummaryMetrics": [],
   "marketMonitoring.priceDecimalPlaces": 2,
   "marketMonitoring.language": "auto",
   "marketMonitoring.colorMode": "none",
