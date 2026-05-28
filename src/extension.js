@@ -11,7 +11,7 @@ const QUOTE_CACHE_KEY = 'quoteCache.v1';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
-const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'netProfit'];
+const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
 const DEFAULT_GROUP_SUMMARY_METRICS = [];
 const AVAILABLE_GROUP_SUMMARY_METRICS = ['totalAssets', 'dailyProfit', 'dailyProfitPercent'];
 const LANGUAGE_LABELS = {
@@ -1216,6 +1216,10 @@ class QuotesViewProvider {
       grid-template-columns: repeat(9, minmax(20px, 1fr));
     }
 
+    .quote.cols-10 {
+      grid-template-columns: repeat(10, minmax(20px, 1fr));
+    }
+
     .quote.editing.cols-1 {
       grid-template-columns: minmax(20px, 1fr) max-content;
     }
@@ -1250,6 +1254,10 @@ class QuotesViewProvider {
 
     .quote.editing.cols-9 {
       grid-template-columns: repeat(9, minmax(20px, 1fr)) max-content;
+    }
+
+    .quote.editing.cols-10 {
+      grid-template-columns: repeat(10, minmax(20px, 1fr)) max-content;
     }
 
     .quote-header {
@@ -1645,6 +1653,7 @@ class QuotesViewProvider {
         change: '涨跌额',
         cost: '成本',
         holding: '持仓',
+        position: '仓位',
         netProfit: '净收益额'
       },
       'en-US': {
@@ -1701,6 +1710,7 @@ class QuotesViewProvider {
         change: 'Change',
         cost: 'Cost',
         holding: 'Holding',
+        position: 'Position',
         netProfit: 'Net profit'
       }
     };
@@ -2023,12 +2033,16 @@ class QuotesViewProvider {
         return;
       }
 
+      const index = Number(input.dataset.index);
+      const field = input.dataset.field;
+      const value = input.value.trim();
       vscode.postMessage({
         command: 'updateSymbolField',
-        index: Number(input.dataset.index),
-        field: input.dataset.field,
-        value: input.value.trim()
+        index,
+        field,
+        value
       });
+      updateLocalSymbolField(index, field, value);
     });
     app.addEventListener('keydown', (event) => {
       const searchInput = event.target.closest('input[data-symbol-query]');
@@ -2391,6 +2405,69 @@ class QuotesViewProvider {
       }
     }
 
+    function updateLocalSymbolField(index, field, value) {
+      if (!latestSnapshot || !Number.isInteger(index) || !['name', 'cost', 'holding'].includes(field)) {
+        return;
+      }
+
+      const parsedValue = parseLocalSymbolFieldValue(index, field, value);
+      const updateSymbol = (symbol, currentIndex) => {
+        if (currentIndex !== index) {
+          return symbol;
+        }
+        return {
+          ...symbol,
+          [field]: parsedValue
+        };
+      };
+      const updateQuote = (quote) => {
+        if (quote.index !== index) {
+          return quote;
+        }
+        return {
+          ...quote,
+          [field]: parsedValue
+        };
+      };
+
+      latestSnapshot = {
+        ...latestSnapshot,
+        configuredSymbols: Array.isArray(latestSnapshot.configuredSymbols)
+          ? latestSnapshot.configuredSymbols.map(updateSymbol)
+          : latestSnapshot.configuredSymbols,
+        groups: Array.isArray(latestSnapshot.groups)
+          ? latestSnapshot.groups.map((group) => ({
+              ...group,
+              items: Array.isArray(group.items) ? group.items.map(updateQuote) : group.items
+            }))
+          : latestSnapshot.groups
+      };
+
+      window.setTimeout(() => {
+        if (latestSnapshot && !shouldFreezeQuoteRender()) {
+          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
+          applyColumnWidths();
+        }
+      }, 0);
+    }
+
+    function parseLocalSymbolFieldValue(index, field, value) {
+      if (field === 'name') {
+        const trimmed = String(value || '').trim();
+        const configured = Array.isArray(latestSnapshot.configuredSymbols) ? latestSnapshot.configuredSymbols[index] : undefined;
+        return trimmed || (configured && configured.code) || '';
+      }
+      if (value === '') {
+        return null;
+      }
+
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return null;
+      }
+      return field === 'holding' ? Math.trunc(parsed) : parsed;
+    }
+
     function toggleQuoteColumn(currentColumns, column, checked) {
       const columns = normalizeQuoteColumns(currentColumns);
       if (checked) {
@@ -2474,7 +2551,12 @@ class QuotesViewProvider {
         const columns = snapshot.quoteColumns || ['name', 'price', 'changePercent'];
         const sort = tableSort[group.name];
         const adding = Boolean(addingGroups[group.name]);
-        const sortedItems = editing ? group.items : sort ? sortQuotesForColumn(group.items, sort.column, sort.direction) : group.items;
+        const positionTotal = calculateGroupPositionTotal(group.items);
+        const itemsWithPosition = group.items.map((item) => ({
+          ...item,
+          position: calculatePosition(item, positionTotal)
+        }));
+        const sortedItems = editing ? itemsWithPosition : sort ? sortQuotesForColumn(itemsWithPosition, sort.column, sort.direction) : itemsWithPosition;
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
         const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, sortedItems.length)).join('');
@@ -2763,6 +2845,9 @@ class QuotesViewProvider {
       if (column === 'holding') {
         return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'holding', 0, '1') : renderReadonlyNumber(quote.holding, 0)) + '</div>';
       }
+      if (column === 'position') {
+        return '<div class="' + cellClass + '">' + (quote.position === null || quote.position === undefined ? '--' : formatDecimal(quote.position, 2) + '%') + '</div>';
+      }
       if (column === 'netProfit') {
         const profit = calculateNetProfit(quote);
         const profitTrend = profit > 0 ? 'up' : profit < 0 ? 'down' : 'flat';
@@ -2802,8 +2887,32 @@ class QuotesViewProvider {
       return (quote.price - quote.cost) * quote.holding;
     }
 
+    function calculateGroupPositionTotal(items) {
+      return items.reduce((total, item) => {
+        const value = calculateMarketValue(item);
+        return value === null ? total : total + value;
+      }, 0);
+    }
+
+    function calculatePosition(quote, total) {
+      const value = calculateMarketValue(quote);
+      if (value === null || !Number.isFinite(total) || total <= 0) {
+        return null;
+      }
+      return (value / total) * 100;
+    }
+
+    function calculateMarketValue(quote) {
+      const price = Number(quote.price);
+      const holding = Number(quote.holding);
+      if (!Number.isFinite(price) || !Number.isFinite(holding) || holding <= 0) {
+        return null;
+      }
+      return price * holding;
+    }
+
     function getQuoteGridClass(columns) {
-      return 'cols-' + Math.max(1, Math.min(9, columns.length));
+      return 'cols-' + Math.max(1, Math.min(10, columns.length));
     }
 
     function getGridTemplate(columns, editing) {
@@ -2838,6 +2947,7 @@ class QuotesViewProvider {
         change: t('change'),
         cost: t('cost'),
         holding: t('holding'),
+        position: t('position'),
         netProfit: t('netProfit')
       }[column] || column;
     }
@@ -2910,6 +3020,9 @@ class QuotesViewProvider {
       }
       if (column === 'holding') {
         return quote.holding;
+      }
+      if (column === 'position') {
+        return quote.position;
       }
       if (column === 'netProfit') {
         return calculateNetProfit(quote);
@@ -4121,6 +4234,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
     '涨跌额',
     '成本',
     '持仓',
+    '仓位',
     '净收益额'
   ]];
 
@@ -4129,6 +4243,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
       continue;
     }
 
+    const positionTotal = calculateGroupPositionTotalValue(group.items);
     for (const quote of group.items) {
       rows.push([
         group.name,
@@ -4140,6 +4255,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
         formatOptionalSignedDecimal(quote.change, priceDecimalPlaces),
         formatOptionalDecimal(quote.cost, 3),
         formatOptionalDecimal(quote.holding, 0),
+        formatOptionalPercent(calculatePositionValue(quote, positionTotal)),
         formatOptionalSignedDecimal(calculateNetProfitValue(quote), priceDecimalPlaces)
       ]);
     }
@@ -4153,6 +4269,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
       formatOptionalLargeAmount(summary.totalAssets, compactLargeAmounts),
       formatOptionalSignedPercent(summary.dailyProfitPercent),
       formatOptionalSignedLargeAmount(summary.dailyProfit, compactLargeAmounts),
+      '',
       '',
       '',
       ''
@@ -4171,6 +4288,30 @@ function calculateNetProfitValue(quote) {
     return null;
   }
   return (quote.price - quote.cost) * holding;
+}
+
+function calculateGroupPositionTotalValue(items) {
+  return items.reduce((total, item) => {
+    const value = calculateMarketValue(item);
+    return value === null ? total : total + value;
+  }, 0);
+}
+
+function calculatePositionValue(quote, total) {
+  const value = calculateMarketValue(quote);
+  if (value === null || !Number.isFinite(total) || total <= 0) {
+    return null;
+  }
+  return (value / total) * 100;
+}
+
+function calculateMarketValue(quote) {
+  const price = Number(quote.price);
+  const holding = Number(quote.holding);
+  if (!Number.isFinite(price) || !Number.isFinite(holding) || holding <= 0) {
+    return null;
+  }
+  return price * holding;
 }
 
 function toPinyin(value) {
@@ -4254,6 +4395,11 @@ function formatOptionalSignedPercent(value) {
     return '';
   }
   return `${Number(value) > 0 ? '+' : ''}${formatted}%`;
+}
+
+function formatOptionalPercent(value) {
+  const formatted = formatOptionalDecimal(value, 2);
+  return formatted ? `${formatted}%` : '';
 }
 
 function formatOptionalLargeAmount(value, compact = false) {
