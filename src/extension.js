@@ -3045,7 +3045,7 @@ class QuotesViewProvider {
     }
 
     function formatSigned(value, digits) {
-      const formatted = Number(value).toFixed(digits);
+      const formatted = formatDecimal(value, digits);
       return value > 0 ? '+' + formatted : formatted;
     }
 
