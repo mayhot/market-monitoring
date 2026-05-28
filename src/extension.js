@@ -63,6 +63,8 @@ function activate(context) {
       monitor.exportCsv();
     } else if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
+    } else if (message.command === 'webviewReady') {
+      monitor.reloadConfiguration();
     } else if (message.command === 'updateQuoteColumns') {
       monitor.updateQuoteColumns(message.columns);
     } else if (message.command === 'updateGroupSummaryMetrics') {
@@ -140,6 +142,7 @@ class MarketMonitor {
 
   reloadConfiguration() {
     this.config = readConfig();
+    this.updateViews(getMarketPhase().name, this.isRefreshing);
     this.schedule();
     this.refresh(false);
   }
@@ -2761,6 +2764,8 @@ class QuotesViewProvider {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
     }
+
+    vscode.postMessage({ command: 'webviewReady' });
   </script>
 </body>
 </html>`;
