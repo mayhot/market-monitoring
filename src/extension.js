@@ -1188,7 +1188,7 @@ class QuotesViewProvider {
       text-align: right;
     }
 
-    .group-summary > span:first-child {
+    .group-summary:not(.metrics-1) > span:first-child {
       text-align: left;
     }
 
@@ -2334,7 +2334,7 @@ class QuotesViewProvider {
         return '';
       }).join('');
 
-      return '<div class="group-summary">' +
+      return '<div class="group-summary metrics-' + visibleMetrics.length + '">' +
         cells +
       '</div>';
     }
