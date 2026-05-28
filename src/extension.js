@@ -1473,8 +1473,21 @@ class QuotesViewProvider {
       overflow: hidden;
       padding: 6px 0 0;
       color: var(--vscode-errorForeground);
-      text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .refresh-error-text {
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: bottom;
+    }
+
+    .refresh-error.scrolling .refresh-error-text {
+      max-width: none;
+      padding-left: 100%;
+      animation: market-monitoring-error-scroll 12s linear infinite;
     }
 
     .refreshing-index {
@@ -1510,6 +1523,16 @@ class QuotesViewProvider {
       100% {
         color: var(--vscode-sideBarTitle-foreground);
         text-shadow: none;
+      }
+    }
+
+    @keyframes market-monitoring-error-scroll {
+      0% {
+        transform: translateX(0);
+      }
+
+      100% {
+        transform: translateX(-100%);
       }
     }
 
@@ -2206,8 +2229,12 @@ class QuotesViewProvider {
     function renderRefreshError(error) {
       const message = String(error || '').trim();
       refreshError.hidden = !message;
-      refreshError.textContent = message;
+      refreshError.innerHTML = message ? '<span class="refresh-error-text">' + escapeHtml(message) + '</span>' : '';
       refreshError.title = message;
+      window.requestAnimationFrame(() => {
+        const text = refreshError.querySelector('.refresh-error-text');
+        refreshError.classList.toggle('scrolling', Boolean(text && text.scrollWidth > refreshError.clientWidth));
+      });
     }
 
     function updateStaticLabels() {
@@ -2582,9 +2609,9 @@ class QuotesViewProvider {
         return '--';
       }
       if (compact && Math.abs(amount) > 10000) {
-        return formatDecimal(amount / 10000, 2) + 'W';
+        return formatAmountDecimal(amount / 10000, 2) + 'W';
       }
-      return formatDecimal(amount, 2);
+      return formatAmountDecimal(amount, 2);
     }
 
     function formatSignedLargeAmount(value, compact) {
@@ -2911,6 +2938,19 @@ class QuotesViewProvider {
 
     function formatDecimal(value, digits) {
       return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1');
+    }
+
+    function formatAmountDecimal(value, digits) {
+      return addThousandsSeparators(formatDecimal(value, digits));
+    }
+
+    function addThousandsSeparators(value) {
+      const text = String(value);
+      const sign = text.startsWith('-') ? '-' : '';
+      const unsigned = sign ? text.slice(1) : text;
+      const parts = unsigned.split('.');
+      parts[0] = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+      return sign + parts.join('.');
     }
 
     function formatSignedDecimal(value, digits) {
@@ -4225,9 +4265,9 @@ function formatOptionalLargeAmount(value, compact = false) {
     return '';
   }
   if (compact && Math.abs(amount) > 10000) {
-    return `${formatDecimalTrimmed(amount / 10000, 2)}W`;
+    return `${formatAmountTrimmed(amount / 10000, 2)}W`;
   }
-  return formatDecimalTrimmed(amount, 2);
+  return formatAmountTrimmed(amount, 2);
 }
 
 function formatOptionalSignedLargeAmount(value, compact = false) {
@@ -4240,6 +4280,19 @@ function formatOptionalSignedLargeAmount(value, compact = false) {
 
 function formatDecimalTrimmed(value, digits) {
   return Number(value).toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+}
+
+function formatAmountTrimmed(value, digits) {
+  return addThousandsSeparators(formatDecimalTrimmed(value, digits));
+}
+
+function addThousandsSeparators(value) {
+  const text = String(value);
+  const sign = text.startsWith('-') ? '-' : '';
+  const unsigned = sign ? text.slice(1) : text;
+  const parts = unsigned.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return sign + parts.join('.');
 }
 
 function formatFileTimestamp(date) {
