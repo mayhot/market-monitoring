@@ -65,7 +65,14 @@ function activate(context) {
     } else if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
     } else if (message.command === 'webviewReady') {
-      monitor.reloadConfiguration();
+      monitor.webviewReady();
+    } else if (message.command === 'webviewError') {
+      monitor.logError('Webview error', {
+        message: message.message || '',
+        source: message.source || '',
+        line: message.line || 0,
+        column: message.column || 0
+      });
     } else if (message.command === 'updateQuoteColumns') {
       monitor.updateQuoteColumns(message.columns);
     } else if (message.command === 'updateGroupSummaryMetrics') {
@@ -119,11 +126,19 @@ class MarketMonitor {
     this.lastUpdatedDate = cachedSnapshot.updatedDate;
     this.isRefreshing = false;
     this.config = readConfig();
+    this.logInfo('Activated', {
+      extensionId: getExtensionId(context),
+      symbols: this.config.symbols.length,
+      groups: this.config.groups.length,
+      cachedQuotes: this.lastQuotes.length,
+      cachedAt: this.lastUpdatedAt || ''
+    });
     this.provider.update(this.createSnapshot('未启动'));
   }
 
   start(showMessage) {
     this.running = true;
+    this.logInfo('Started');
     this.schedule();
     this.refresh(false);
     if (showMessage) {
@@ -133,6 +148,7 @@ class MarketMonitor {
 
   stop(showMessage) {
     this.running = false;
+    this.logInfo('Stopped');
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -143,11 +159,35 @@ class MarketMonitor {
     }
   }
 
-  reloadConfiguration() {
+  reloadConfiguration(reason = 'configurationChanged') {
     this.config = readConfig();
+    this.logInfo('Configuration reloaded', {
+      reason,
+      symbols: this.config.symbols.length,
+      groups: this.config.groups.length,
+      intervalSeconds: this.config.refreshIntervalSeconds,
+      onlyDuringTradingTime: this.config.onlyDuringTradingTime
+    });
     this.updateViews(getMarketPhase().name, this.isRefreshing);
     this.schedule();
     this.refresh(false);
+  }
+
+  webviewReady() {
+    this.logInfo('Webview ready');
+    this.reloadConfiguration('webviewReady');
+  }
+
+  logInfo(message, details) {
+    this.output.appendLine(formatLogLine('INFO', message, details));
+  }
+
+  logWarn(message, details) {
+    this.output.appendLine(formatLogLine('WARN', message, details));
+  }
+
+  logError(message, details) {
+    this.output.appendLine(formatLogLine('ERROR', message, details));
   }
 
   async addSymbol(symbol) {
@@ -426,6 +466,12 @@ class MarketMonitor {
 
   async refresh(force) {
     if (!this.running || this.isRefreshing) {
+      if (force) {
+        this.logWarn('Refresh skipped', {
+          reason: !this.running ? 'notRunning' : 'alreadyRefreshing',
+          force
+        });
+      }
       return;
     }
 
@@ -439,16 +485,30 @@ class MarketMonitor {
 
     if (!shouldFetch) {
       this.lastError = '';
+      if (force) {
+        this.logInfo('Refresh skipped', {
+          reason: 'notNeeded',
+          phase: phase.name,
+          quotes: this.lastQuotes.length
+        });
+      }
       this.updateViews(phase.name);
       this.schedule();
       return;
     }
 
     this.isRefreshing = true;
+    this.logInfo('Refresh started', {
+      force,
+      phase: phase.name,
+      symbols: this.config.symbols.length,
+      totalCodes: quoteSymbols.length,
+      cachedQuotes: this.lastQuotes.length
+    });
     this.updateViews(phase.name, true);
 
     try {
-      const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs);
+      const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs, (message, details) => this.logInfo(message, details));
       this.lastQuotes = mergeWithPreviousQuotes(fetchedQuotes, this.lastQuotes);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
@@ -456,9 +516,17 @@ class MarketMonitor {
       this.notifyAlerts(this.triggeredAlerts);
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
+      this.logInfo('Refresh succeeded', {
+        quotes: this.lastQuotes.length,
+        usableQuotes: countUsableQuotes(this.lastQuotes),
+        usableSymbols: countUsableCodes(this.lastQuotes, this.config.symbols.map((symbol) => symbol.code)),
+        updatedAt: this.lastUpdatedAt
+      });
     } catch (error) {
       this.lastError = getErrorMessage(error);
-      this.output.appendLine(`[${new Date().toISOString()}] ${this.lastError}`);
+      this.logError('Refresh failed', {
+        error: this.lastError
+      });
     } finally {
       this.isRefreshing = false;
       this.updateViews(getMarketPhase().name);
@@ -562,6 +630,8 @@ class MarketMonitor {
       quoteColumns: this.config.quoteColumns,
       groupSummaryMetrics: this.config.groupSummaryMetrics,
       symbolCount: this.config.symbols.length,
+      configuredGroups: this.config.groups,
+      configuredSymbols: this.config.symbols,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
       groups: groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection)
@@ -595,6 +665,8 @@ class QuotesViewProvider {
       quoteColumns: DEFAULT_QUOTE_COLUMNS,
       groupSummaryMetrics: DEFAULT_GROUP_SUMMARY_METRICS,
       symbolCount: 0,
+      configuredGroups: [DEFAULT_GROUP],
+      configuredSymbols: [],
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: INDEX_SYMBOLS.map((symbol) => ({
         ...symbol,
@@ -1363,8 +1435,10 @@ class QuotesViewProvider {
     .index-dock {
       position: sticky;
       bottom: 0;
-      display: flex;
-      justify-content: flex-end;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      gap: 8px;
+      align-items: flex-end;
       min-width: 0;
       max-width: 100%;
       padding-top: 8px;
@@ -1380,6 +1454,7 @@ class QuotesViewProvider {
       min-width: 0;
       max-width: 100%;
       padding: 6px 0 0;
+      justify-self: end;
     }
 
     .index-quote {
@@ -1389,6 +1464,16 @@ class QuotesViewProvider {
       text-overflow: ellipsis;
       text-align: right;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .refresh-error {
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+      padding: 6px 0 0;
+      color: var(--vscode-errorForeground);
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
 
@@ -1470,6 +1555,7 @@ class QuotesViewProvider {
   <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
   <footer class="index-dock">
+    <div id="refresh-error" class="refresh-error" hidden></div>
     <div class="index-widget">
       <select id="index-select" title="切换指数"></select>
       <div id="index-quote" class="index-quote flat">--</div>
@@ -1609,6 +1695,7 @@ class QuotesViewProvider {
     const sortHint = document.getElementById('sort-hint');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
+    const refreshError = document.getElementById('refresh-error');
     const dynamicColors = document.getElementById('dynamic-colors');
     let locale = 'zh-CN';
     let selectedIndexCode = viewState.selectedIndexCode || 'sh000001';
@@ -1960,7 +2047,7 @@ class QuotesViewProvider {
 
     window.addEventListener('message', (event) => {
       if (event.data && event.data.type === 'snapshot') {
-        render(event.data.snapshot);
+        safeRender(event.data.snapshot);
       } else if (event.data && event.data.type === 'symbolSearchResults') {
         if (event.data.requestId !== activeSymbolSearchRequestId) {
           return;
@@ -1971,6 +2058,16 @@ class QuotesViewProvider {
         symbolSearchError = event.data.error || '';
         renderActiveSymbolResults();
       }
+    });
+
+    window.addEventListener('error', (event) => {
+      reportWebviewError(event.message, event.filename, event.lineno, event.colno);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event.reason;
+      const message = reason && reason.message ? reason.message : String(reason || 'Unhandled promise rejection');
+      reportWebviewError(message, '', 0, 0);
     });
 
     function renderActiveSymbolResults() {
@@ -2036,6 +2133,16 @@ class QuotesViewProvider {
       }
     }
 
+    function safeRender(snapshot) {
+      try {
+        render(snapshot);
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        reportWebviewError(message, '', 0, 0);
+        renderRefreshError(message);
+      }
+    }
+
     function render(snapshot) {
       const flashGroupNames = Boolean(latestSnapshot)
         && !snapshot.loading
@@ -2058,6 +2165,7 @@ class QuotesViewProvider {
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
+      renderRefreshError(snapshot.error);
       sortHint.textContent = snapshot.sortBy === 'configured'
         ? ''
         : t('sortHint');
@@ -2072,7 +2180,7 @@ class QuotesViewProvider {
       }
 
       if (snapshot.error) {
-        app.innerHTML = '<div class="error">' + escapeHtml(snapshot.error) + '</div>' + renderGroups(snapshot.groups, snapshot);
+        app.innerHTML = renderGroups(snapshot.groups, snapshot);
         applyColumnWidths();
         renderIndex(snapshot);
         return;
@@ -2093,6 +2201,13 @@ class QuotesViewProvider {
         && activeElement
         && app.contains(activeElement)
         && Boolean(activeElement.closest('input[data-field], input[data-group-name], input[data-symbol-query], .group-symbol-form'));
+    }
+
+    function renderRefreshError(error) {
+      const message = String(error || '').trim();
+      refreshError.hidden = !message;
+      refreshError.textContent = message;
+      refreshError.title = message;
     }
 
     function updateStaticLabels() {
@@ -2318,11 +2433,15 @@ class QuotesViewProvider {
     }
 
     function renderGroups(groups, snapshot, flashGroupNames = false) {
-      if (!groups || groups.length === 0) {
+      const visibleGroups = Array.isArray(groups) && groups.length > 0
+        ? groups
+        : buildFallbackGroups(snapshot);
+
+      if (!visibleGroups || visibleGroups.length === 0) {
         return '<div class="empty">' + escapeHtml(t('noSymbols')) + '</div>';
       }
 
-      return groups.map((group) => {
+      return visibleGroups.map((group) => {
         const editing = Boolean(editingGroups[group.name]);
         const collapsed = Boolean(collapsedGroups[group.name]);
         const columns = snapshot.quoteColumns || ['name', 'price', 'changePercent'];
@@ -2332,7 +2451,7 @@ class QuotesViewProvider {
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
         const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, sortedItems.length)).join('');
-        const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics);
+        const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics, snapshot.compactLargeAmounts);
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
@@ -2359,7 +2478,40 @@ class QuotesViewProvider {
       }).join('');
     }
 
-    function renderGroupSummary(items, metrics) {
+    function buildFallbackGroups(snapshot) {
+      const symbols = Array.isArray(snapshot.configuredSymbols) ? snapshot.configuredSymbols : [];
+      const groupNames = Array.isArray(snapshot.configuredGroups) && snapshot.configuredGroups.length > 0
+        ? snapshot.configuredGroups
+        : symbols.reduce((names, symbol) => {
+            const groupName = symbol.group || defaultGroupName;
+            return names.includes(groupName) ? names : [...names, groupName];
+          }, []);
+
+      if (symbols.length === 0 && groupNames.length === 0) {
+        return [];
+      }
+
+      return groupNames.map((groupName) => ({
+        name: groupName,
+        stats: { up: 0, down: 0, flat: 0, averageChangePercent: null },
+        items: symbols
+          .map((symbol, index) => ({
+            ...symbol,
+            alias: symbol.alias || '',
+            index,
+            alerts: [],
+            price: null,
+            previousClose: null,
+            change: null,
+            changePercent: null,
+            time: '',
+            status: ''
+          }))
+          .filter((symbol) => (symbol.group || defaultGroupName) === groupName)
+      }));
+    }
+
+    function renderGroupSummary(items, metrics, compactLargeAmounts) {
       const visibleMetrics = normalizeGroupSummaryMetrics(metrics);
       if (visibleMetrics.length === 0) {
         return '';
@@ -2369,11 +2521,11 @@ class QuotesViewProvider {
       const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
       const cells = visibleMetrics.map((metric) => {
         if (metric === 'totalAssets') {
-          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets, snapshot.compactLargeAmounts);
+          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets, compactLargeAmounts);
           return '<span title="' + escapeHtml(t('totalAssets')) + '">' + escapeHtml(assets) + '</span>';
         }
         if (metric === 'dailyProfit') {
-          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit, snapshot.compactLargeAmounts);
+          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit, compactLargeAmounts);
           return '<span class="quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfit')) + '">' + escapeHtml(profit) + '</span>';
         }
         if (metric === 'dailyProfitPercent') {
@@ -2564,7 +2716,7 @@ class QuotesViewProvider {
       }
       if (column === 'alias') {
         const alias = quote.alias || '';
-        return '<div class="' + cellClass + ' code" title="' + escapeHtml(alias) + '">' + escapeHtml(alias || '--') + '</div>';
+        return '<div class="' + cellClass + '" title="' + escapeHtml(alias) + '">' + escapeHtml(alias || '--') + '</div>';
       }
       if (column === 'code') {
         return '<div class="' + cellClass + ' code">' + escapeHtml(quote.code) + '</div>';
@@ -2773,6 +2925,16 @@ class QuotesViewProvider {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+    }
+
+    function reportWebviewError(message, source, line, column) {
+      vscode.postMessage({
+        command: 'webviewError',
+        message,
+        source,
+        line,
+        column
+      });
     }
 
     vscode.postMessage({ command: 'webviewReady' });
@@ -2997,9 +3159,9 @@ function optionalInteger(value) {
   return Math.trunc(parsed);
 }
 
-async function fetchQuotes(symbols, timeoutMs) {
+async function fetchQuotes(symbols, timeoutMs, log) {
   const uniqueCodes = Array.from(new Set(symbols.map((symbol) => symbol.code)));
-  const rawQuotes = await fetchRawQuotes(uniqueCodes, timeoutMs);
+  const rawQuotes = await fetchRawQuotesConcurrent(uniqueCodes, timeoutMs, log);
 
   return symbols.map((symbol) => {
     const raw = rawQuotes.get(symbol.code);
@@ -3022,7 +3184,7 @@ async function fetchQuotes(symbols, timeoutMs) {
   });
 }
 
-async function fetchRawQuotes(codes, timeoutMs) {
+async function fetchRawQuotes(codes, timeoutMs, log) {
   const providers = [
     {
       name: '新浪',
@@ -3051,6 +3213,14 @@ async function fetchRawQuotes(codes, timeoutMs) {
     try {
       const body = await requestText(provider.url(query), timeoutMs, provider.headers);
       const quotes = provider.parse(body);
+      if (log) {
+        log('Quote provider returned', {
+          provider: provider.name,
+          requested: codes.length,
+          returned: quotes.size,
+          usable: countUsableCodesFromMap(quotes, codes)
+        });
+      }
 
       for (const code of codes) {
         if (mergedQuotes.has(code)) {
@@ -3071,6 +3241,12 @@ async function fetchRawQuotes(codes, timeoutMs) {
         errors.push(`${provider.name}: 未返回有效行情`);
       }
     } catch (error) {
+      if (log) {
+        log('Quote provider failed', {
+          provider: provider.name,
+          error: getErrorMessage(error)
+        });
+      }
       errors.push(`${provider.name}: ${getErrorMessage(error)}`);
     }
   }
@@ -3080,6 +3256,113 @@ async function fetchRawQuotes(codes, timeoutMs) {
   }
 
   throw new Error(`行情请求失败：${errors.join('；')}`);
+}
+
+async function fetchRawQuotesConcurrent(codes, timeoutMs, log) {
+  const providers = [
+    {
+      name: '新浪',
+      url: (query) => `https://hq.sinajs.cn/list=${query}`,
+      headers: {
+        Referer: 'https://finance.sina.com.cn/',
+        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+      },
+      parse: parseSinaResponse
+    },
+    {
+      name: '腾讯',
+      url: (query) => `https://qt.gtimg.cn/q=${query}`,
+      headers: {
+        Referer: 'https://gu.qq.com/',
+        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+      },
+      parse: parseTencentResponse
+    }
+  ];
+  const query = codes.join(',');
+  const mergedQuotes = new Map();
+  const errors = [];
+
+  if (log) {
+    log('Quote providers started', {
+      providers: providers.map((provider) => provider.name),
+      requested: codes.length
+    });
+  }
+
+  const pending = providers.map((provider) => fetchProviderQuotes(provider, query, timeoutMs));
+  while (pending.length > 0) {
+    const { index, result } = await Promise.race(pending.map((promise, index) => promise.then((result) => ({ index, result }))));
+    pending.splice(index, 1);
+
+    if (result.error) {
+      if (log) {
+        log('Quote provider failed', {
+          provider: result.provider,
+          elapsedMs: result.elapsedMs,
+          error: result.error
+        });
+      }
+      errors.push(`${result.provider}: ${result.error}`);
+      continue;
+    }
+
+    const quotes = result.quotes;
+    if (log) {
+      log('Quote provider returned', {
+        provider: result.provider,
+        requested: codes.length,
+        returned: quotes.size,
+        usable: countUsableCodesFromMap(quotes, codes),
+        elapsedMs: result.elapsedMs
+      });
+    }
+
+    for (const code of codes) {
+      if (mergedQuotes.has(code)) {
+        continue;
+      }
+
+      const quote = quotes.get(code);
+      if (isUsableQuote(quote)) {
+        mergedQuotes.set(code, quote);
+      }
+    }
+
+    if (codes.every((code) => mergedQuotes.has(code))) {
+      return mergedQuotes;
+    }
+
+    if (quotes.size === 0) {
+      errors.push(`${result.provider}: 未返回有效行情`);
+    }
+  }
+
+  if (mergedQuotes.size > 0) {
+    return mergedQuotes;
+  }
+
+  throw new Error(`行情请求失败：${errors.join('；')}`);
+}
+
+async function fetchProviderQuotes(provider, query, timeoutMs) {
+  const startedAt = Date.now();
+  try {
+    const body = await requestText(provider.url(query), timeoutMs, provider.headers);
+    return {
+      provider: provider.name,
+      quotes: provider.parse(body),
+      elapsedMs: Date.now() - startedAt,
+      error: ''
+    };
+  } catch (error) {
+    return {
+      provider: provider.name,
+      quotes: new Map(),
+      elapsedMs: Date.now() - startedAt,
+      error: getErrorMessage(error)
+    };
+  }
 }
 
 async function fetchSymbolSearchResults(keyword, timeoutMs) {
@@ -3139,6 +3422,19 @@ function getCodeMarketLabel(code) {
 
 function isUsableQuote(quote) {
   return Boolean(quote && quote.price !== null);
+}
+
+function countUsableQuotes(quotes) {
+  return quotes.filter(isUsableQuote).length;
+}
+
+function countUsableCodes(quotes, codes) {
+  const quoteByCode = new Map(quotes.map((quote) => [quote.code, quote]));
+  return codes.filter((code) => isUsableQuote(quoteByCode.get(code))).length;
+}
+
+function countUsableCodesFromMap(quotes, codes) {
+  return codes.filter((code) => isUsableQuote(quotes.get(code))).length;
 }
 
 function readCachedQuoteSnapshot(globalState) {
@@ -4226,6 +4522,19 @@ function getErrorMessage(error) {
     return error.message;
   }
   return String(error);
+}
+
+function formatLogLine(level, message, details) {
+  const suffix = details === undefined ? '' : ` ${safeStringify(details)}`;
+  return `[${new Date().toISOString()}] ${level} ${message}${suffix}`;
+}
+
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return String(value);
+  }
 }
 
 function getExtensionId(context) {
