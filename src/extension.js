@@ -1014,6 +1014,18 @@ class QuotesViewProvider {
       background: color-mix(in srgb, var(--surface-soft) 38%, transparent);
     }
 
+    .group-inline-panel {
+      position: sticky;
+      top: 44px;
+      z-index: 3;
+      display: grid;
+      gap: 7px;
+      padding: 8px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
     .group-footer-actions,
     .group-rename-row {
       display: flex;
@@ -1071,7 +1083,7 @@ class QuotesViewProvider {
       margin: 0 0 10px;
       border: 1px solid var(--border);
       border-radius: 7px;
-      overflow: hidden;
+      overflow: visible;
       min-width: 0;
       max-width: 100%;
       background: var(--surface);
@@ -1095,6 +1107,9 @@ class QuotesViewProvider {
     }
 
     .group-title {
+      position: sticky;
+      top: 0;
+      z-index: 4;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -1103,6 +1118,7 @@ class QuotesViewProvider {
       padding: 8px 8px;
       color: var(--vscode-sideBarTitle-foreground);
       background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+      border-radius: 7px 7px 0 0;
     }
 
     .group-title-actions {
@@ -2579,8 +2595,11 @@ class QuotesViewProvider {
                 downStat +
                 flatStat +
               '</span>' +
+              renderGroupAddButton(group.name, adding) +
+              renderGroupEditButton(group.name, editing) +
             '</span>' +
           '</div>' +
+          renderGroupInlinePanel(group.name, editing, adding) +
           table +
           footer +
           '</section>';
@@ -2713,16 +2732,32 @@ class QuotesViewProvider {
 
     function renderGroupFooter(groupName, editing, adding) {
       return '<div class="group-footer">' +
-        (adding ? renderGroupSymbolSearch(groupName) : '') +
-        (editing ? '<div class="group-rename-row">' +
-          '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('groupName')) + '">' +
-          '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('saveGroupName')) + '" aria-label="' + escapeHtml(t('saveGroupName')) + '">✓</button>' +
-        '</div>' : '') +
         '<div class="group-footer-actions">' +
-          '<button class="secondary icon-button" data-action="addToGroup" data-group="' + escapeHtml(groupName) + '" title="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '" aria-label="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '">' + (adding ? '−' : '＋') + '</button>' +
-          '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '" aria-label="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '">' + (editing ? '✓' : '✎') + '</button>' +
+          renderGroupAddButton(groupName, adding) +
+          renderGroupEditButton(groupName, editing) +
         '</div>' +
       '</div>';
+    }
+
+    function renderGroupInlinePanel(groupName, editing, adding) {
+      const content = (adding ? renderGroupSymbolSearch(groupName) : '') +
+        (editing ? renderGroupRenameRow(groupName) : '');
+      return content ? '<div class="group-inline-panel">' + content + '</div>' : '';
+    }
+
+    function renderGroupRenameRow(groupName) {
+      return '<div class="group-rename-row">' +
+        '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('groupName')) + '">' +
+        '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('saveGroupName')) + '" aria-label="' + escapeHtml(t('saveGroupName')) + '">✓</button>' +
+      '</div>';
+    }
+
+    function renderGroupAddButton(groupName, adding) {
+      return '<button class="secondary icon-button" data-action="addToGroup" data-group="' + escapeHtml(groupName) + '" title="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '" aria-label="' + (adding ? escapeHtml(t('collapseAdd')) : escapeHtml(t('addSymbol'))) + '">' + (adding ? '−' : '＋') + '</button>';
+    }
+
+    function renderGroupEditButton(groupName, editing) {
+      return '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '" aria-label="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '">' + (editing ? '✓' : '✎') + '</button>';
     }
 
     function renderGroupSymbolSearch(groupName) {

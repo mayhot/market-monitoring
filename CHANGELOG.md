@@ -8,6 +8,14 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.1.8] - 2026-05-29
+
+### Changed
+
+- Bumped the extension version from `0.1.7` to `0.1.8`.
+- Kept group edit and add actions available in the sticky group header for long symbol lists.
+- Moved group rename and symbol search panels below the group header so they remain accessible while scrolling.
+
 ## [0.1.7] - 2026-05-28
 
 ### Added
