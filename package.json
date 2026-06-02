@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -484,6 +484,166 @@
               "changePercentBelow": {
                 "type": "number",
                 "description": "Trigger when change percentage is less than or equal to this value."
+              },
+              "movingAverageBelow": {
+                "type": "boolean",
+                "default": true,
+                "description": "Trigger when latest price is less than the configured N-day moving average. Enabled by default for each alert rule; set false to disable."
+              },
+              "movingAverageDays": {
+                "type": "integer",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Moving average window used by movingAverageBelow. Defaults to 20 and is active unless movingAverageBelow is false."
+              },
+              "movingAverageBelowDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Compatibility shorthand: setting this also enables movingAverageBelow."
+              },
+              "bearishMovingAverage": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when moving averages are in bearish order: short < mid < long."
+              },
+              "bearishMovingAverageShortDays": {
+                "type": "integer",
+                "default": 5,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Short moving average window for bearishMovingAverage."
+              },
+              "bearishMovingAverageMidDays": {
+                "type": "integer",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Middle moving average window for bearishMovingAverage."
+              },
+              "bearishMovingAverageLongDays": {
+                "type": "integer",
+                "default": 60,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Long moving average window for bearishMovingAverage."
+              },
+              "macdDeathCross": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when MACD DIF crosses below DEA."
+              },
+              "macdBelowZeroOnly": {
+                "type": "boolean",
+                "default": false,
+                "description": "Only trigger MACD death-cross alerts when both DIF and DEA are below zero."
+              },
+              "volumeDrop": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger on price drop with current daily volume above the configured average-volume multiplier."
+              },
+              "volumeDropPercent": {
+                "type": "number",
+                "default": 2,
+                "minimum": 0,
+                "description": "Minimum negative change percentage for volumeDrop."
+              },
+              "volumeDropAverageDays": {
+                "type": "integer",
+                "default": 5,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Average-volume window for volumeDrop."
+              },
+              "volumeDropMultiplier": {
+                "type": "number",
+                "default": 1.5,
+                "minimum": 0,
+                "description": "Current volume must be at least this many times the average volume for volumeDrop."
+              },
+              "reboundLowVolume": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when price rebounds while current daily volume is below the configured average-volume ratio."
+              },
+              "reboundRisePercent": {
+                "type": "number",
+                "default": 0,
+                "minimum": 0,
+                "description": "Minimum positive change percentage for reboundLowVolume."
+              },
+              "reboundLowVolumeAverageDays": {
+                "type": "integer",
+                "default": 5,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Average-volume window for reboundLowVolume."
+              },
+              "reboundLowVolumeRatio": {
+                "type": "number",
+                "default": 0.8,
+                "minimum": 0,
+                "description": "Current volume must be less than or equal to this ratio of average volume for reboundLowVolume."
+              },
+              "lowBreak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when latest price breaks below the lowest low of the configured recent window."
+              },
+              "lowBreakDays": {
+                "type": "integer",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Lookback window for lowBreak. Setting this also enables lowBreak."
+              },
+              "rsiWeak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when RSI is below the configured threshold."
+              },
+              "rsiDays": {
+                "type": "integer",
+                "default": 14,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "RSI window for rsiWeak."
+              },
+              "rsiBelow": {
+                "type": "number",
+                "default": 50,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "RSI threshold for rsiWeak."
+              },
+              "bollingerBelow": {
+                "type": [
+                  "boolean",
+                  "string"
+                ],
+                "default": false,
+                "enum": [
+                  false,
+                  true,
+                  "middle",
+                  "lower"
+                ],
+                "description": "Trigger when latest price is below Bollinger middle or lower band. true means middle."
+              },
+              "bollingerDays": {
+                "type": "integer",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "Bollinger band window."
+              },
+              "bollingerStdDev": {
+                "type": "number",
+                "default": 2,
+                "minimum": 0,
+                "description": "Bollinger band standard-deviation multiplier."
               }
             },
             "additionalProperties": false

@@ -11,6 +11,14 @@ const QUOTE_CACHE_KEY = 'quoteCache.v1';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
+const DEFAULT_MOVING_AVERAGE_DAYS = 20;
+const MAX_MOVING_AVERAGE_DAYS = 250;
+const DEFAULT_BEARISH_MA_DAYS = { short: 5, mid: 20, long: 60 };
+const DEFAULT_VOLUME_AVERAGE_DAYS = 5;
+const DEFAULT_LOW_BREAK_DAYS = 20;
+const DEFAULT_RSI_DAYS = 14;
+const DEFAULT_BOLLINGER_DAYS = 20;
+const DEFAULT_BOLLINGER_STD_DEV = 2;
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -259,6 +267,7 @@ class MarketMonitor {
     this.lastQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
+    this.dailyKlineCache = new Map();
     this.lastError = '';
     this.lastUpdatedAt = cachedSnapshot.updatedAt;
     this.lastUpdatedDate = cachedSnapshot.updatedDate;
@@ -724,7 +733,9 @@ class MarketMonitor {
       this.lastQuotes = mergeWithPreviousQuotes(fetchedQuotes, this.lastQuotes);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
-      this.triggeredAlerts = this.config.enableAlerts ? evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces) : [];
+      this.triggeredAlerts = this.config.enableAlerts
+        ? await evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, (message, details) => this.logInfo(message, details))
+        : [];
       this.notifyAlerts(this.triggeredAlerts);
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
@@ -3308,9 +3319,11 @@ function readConfig() {
     .filter(Boolean)
     .filter((symbol) => !isBuiltInIndexCode(symbol.code));
   const groups = normalizeGroups(config.get('groups', [DEFAULT_GROUP]), symbols);
-  const alerts = config.get('alerts', [])
+  const rawAlerts = config.get('alerts', []);
+  const explicitAlertCodes = getExplicitAlertCodes(rawAlerts);
+  const alerts = addDefaultMovingAverageAlerts(symbols, rawAlerts
     .map(normalizeAlertRule)
-    .filter(Boolean);
+    .filter(Boolean), explicitAlertCodes);
   const language = sanitizeLanguage(config.get('language', DEFAULT_LANGUAGE));
   const ai = readAiConfig(config);
 
@@ -4055,6 +4068,41 @@ function findGroupInsertIndex(symbols, groupName) {
   return insertIndex;
 }
 
+function getExplicitAlertCodes(items) {
+  if (!Array.isArray(items)) {
+    return new Set();
+  }
+
+  return new Set(items
+    .map((item) => item && typeof item === 'object' ? normalizeCode(String(item.code || '')) : '')
+    .filter(Boolean));
+}
+
+function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
+  const configuredCodes = explicitAlertCodes || new Set();
+  const existingCodes = new Set((alerts || []).map((alert) => alert.code));
+  const defaults = [];
+
+  for (const symbol of symbols) {
+    if (!symbol || !symbol.code || configuredCodes.has(symbol.code) || existingCodes.has(symbol.code)) {
+      continue;
+    }
+
+    defaults.push({
+      code: symbol.code,
+      name: symbol.name || '',
+      movingAverageBelow: true,
+      movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
+      priceAbove: null,
+      priceBelow: null,
+      changePercentAbove: null,
+      changePercentBelow: null
+    });
+  }
+
+  return [...(alerts || []), ...defaults];
+}
+
 function normalizeAlertRule(item) {
   if (!item || typeof item !== 'object' || !item.code) {
     return undefined;
@@ -4071,14 +4119,43 @@ function normalizeAlertRule(item) {
     changePercentAbove: optionalNumber(item.changePercentAbove),
     changePercentBelow: optionalNumber(item.changePercentBelow)
   };
+  const movingAverageBelow = item.movingAverageBelow !== false || item.movingAverageBelowDays !== undefined;
+  const movingAverageDays = sanitizeMovingAverageDays(item.movingAverageDays !== undefined ? item.movingAverageDays : item.movingAverageBelowDays);
+  const technicalIndicators = {
+    bearishMovingAverage: item.bearishMovingAverage === true,
+    bearishMovingAverageShortDays: sanitizeMovingAverageDays(item.bearishMovingAverageShortDays || DEFAULT_BEARISH_MA_DAYS.short),
+    bearishMovingAverageMidDays: sanitizeMovingAverageDays(item.bearishMovingAverageMidDays || DEFAULT_BEARISH_MA_DAYS.mid),
+    bearishMovingAverageLongDays: sanitizeMovingAverageDays(item.bearishMovingAverageLongDays || DEFAULT_BEARISH_MA_DAYS.long),
+    macdDeathCross: item.macdDeathCross === true,
+    macdBelowZeroOnly: item.macdBelowZeroOnly === true,
+    volumeDrop: item.volumeDrop === true,
+    volumeDropPercent: optionalPositiveNumber(item.volumeDropPercent, 2),
+    volumeDropAverageDays: sanitizeMovingAverageDays(item.volumeDropAverageDays || DEFAULT_VOLUME_AVERAGE_DAYS),
+    volumeDropMultiplier: optionalPositiveNumber(item.volumeDropMultiplier, 1.5),
+    reboundLowVolume: item.reboundLowVolume === true,
+    reboundRisePercent: optionalPositiveNumber(item.reboundRisePercent, 0),
+    reboundLowVolumeAverageDays: sanitizeMovingAverageDays(item.reboundLowVolumeAverageDays || DEFAULT_VOLUME_AVERAGE_DAYS),
+    reboundLowVolumeRatio: optionalPositiveNumber(item.reboundLowVolumeRatio, 0.8),
+    lowBreak: item.lowBreak === true || item.lowBreakDays !== undefined,
+    lowBreakDays: sanitizeMovingAverageDays(item.lowBreakDays || DEFAULT_LOW_BREAK_DAYS),
+    rsiWeak: item.rsiWeak === true,
+    rsiDays: sanitizeMovingAverageDays(item.rsiDays || DEFAULT_RSI_DAYS),
+    rsiBelow: clampNumber(optionalPositiveNumber(item.rsiBelow, 50), 0, 100),
+    bollingerBelow: sanitizeBollingerBelow(item.bollingerBelow),
+    bollingerDays: sanitizeMovingAverageDays(item.bollingerDays || DEFAULT_BOLLINGER_DAYS),
+    bollingerStdDev: optionalPositiveNumber(item.bollingerStdDev, DEFAULT_BOLLINGER_STD_DEV)
+  };
 
-  if (Object.values(thresholds).every((value) => value === null)) {
+  if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !hasTechnicalAlertIndicator(technicalIndicators)) {
     return undefined;
   }
 
   return {
     code,
     name: String(item.name || '').trim(),
+    movingAverageBelow,
+    movingAverageDays,
+    ...technicalIndicators,
     ...thresholds
   };
 }
@@ -4128,6 +4205,21 @@ function optionalNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function optionalPositiveNumber(value, fallback) {
+  const parsed = optionalNumber(value);
+  if (parsed === null) {
+    return fallback;
+  }
+  return parsed >= 0 ? parsed : fallback;
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
 function optionalInteger(value) {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -4138,6 +4230,36 @@ function optionalInteger(value) {
     return null;
   }
   return Math.trunc(parsed);
+}
+
+function sanitizeMovingAverageDays(value) {
+  const parsed = optionalInteger(value);
+  if (parsed === null) {
+    return DEFAULT_MOVING_AVERAGE_DAYS;
+  }
+  return Math.min(MAX_MOVING_AVERAGE_DAYS, Math.max(1, parsed));
+}
+
+function sanitizeBollingerBelow(value) {
+  if (value === true) {
+    return 'middle';
+  }
+  if (value === 'middle' || value === 'lower') {
+    return value;
+  }
+  return '';
+}
+
+function hasTechnicalAlertIndicator(indicators) {
+  return Boolean(
+    indicators.bearishMovingAverage
+    || indicators.macdDeathCross
+    || indicators.volumeDrop
+    || indicators.reboundLowVolume
+    || indicators.lowBreak
+    || indicators.rsiWeak
+    || indicators.bollingerBelow
+  );
 }
 
 async function fetchQuotes(symbols, timeoutMs, log) {
@@ -4467,13 +4589,15 @@ function normalizeCachedQuote(value) {
   };
 }
 
-function evaluateAlerts(quotes, rules, priceDecimalPlaces) {
+async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, log) {
   if (!rules || rules.length === 0) {
     return [];
   }
 
   const alerts = [];
   const quotesByCode = new Map(quotes.map((quote) => [quote.code, quote]));
+  const technicalSnapshots = await fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log);
+  const movingAverageSnapshots = await fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log);
 
   for (const rule of rules) {
     const quote = quotesByCode.get(rule.code);
@@ -4482,6 +4606,8 @@ function evaluateAlerts(quotes, rules, priceDecimalPlaces) {
     }
 
     const displayName = rule.name || quote.name || quote.code;
+    addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
+    addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'priceAbove', rule.priceAbove, quote.price, '价格 >=', priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'priceBelow', rule.priceBelow, quote.price, '价格 <=', priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'changePercentAbove', rule.changePercentAbove, quote.changePercent, '涨跌幅 >=', 2, '%');
@@ -4512,6 +4638,490 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
     label: alertLabel,
     message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
   });
+}
+
+async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log) {
+  const snapshots = new Map();
+  const tasks = [];
+  const requested = new Set();
+
+  for (const rule of rules) {
+    if (!rule.movingAverageBelow) {
+      continue;
+    }
+
+    const quote = quotesByCode.get(rule.code);
+    if (!isUsableQuote(quote)) {
+      continue;
+    }
+
+    const key = getMovingAverageSnapshotKey(rule.code, rule.movingAverageDays);
+    if (requested.has(key)) {
+      continue;
+    }
+    requested.add(key);
+    tasks.push(fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache, log)
+      .then((snapshot) => {
+        if (snapshot) {
+          snapshots.set(key, snapshot);
+        }
+      }));
+  }
+
+  await Promise.all(tasks);
+  return snapshots;
+}
+
+async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache, log) {
+  try {
+    const bars = await fetchDailyKlineBars(quote.code, days + 10, timeoutMs, dailyKlineCache);
+    const today = getShanghaiDateString();
+    const previousCloses = bars
+      .filter((bar) => bar.date !== today)
+      .map((bar) => bar.close)
+      .filter((close) => Number.isFinite(close))
+      .slice(-(days - 1));
+
+    if (previousCloses.length < days - 1 || !Number.isFinite(quote.price)) {
+      return null;
+    }
+
+    const closes = [...previousCloses, quote.price];
+    const average = closes.reduce((sum, close) => sum + close, 0) / closes.length;
+    return {
+      code: quote.code,
+      days,
+      average,
+      samples: closes.length
+    };
+  } catch (error) {
+    if (log) {
+      log('Moving average alert data failed', {
+        code: quote.code,
+        days,
+        error: getErrorMessage(error)
+      });
+    }
+    return null;
+  }
+}
+
+async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
+  const secid = toEastmoneySecid(code);
+  if (!secid) {
+    return [];
+  }
+
+  const normalizedLimit = Math.max(1, Math.trunc(limit));
+  const cacheKey = `${getShanghaiDateString()}:${code}`;
+  if (dailyKlineCache && dailyKlineCache.has(cacheKey)) {
+    const cachedBars = dailyKlineCache.get(cacheKey);
+    if (Array.isArray(cachedBars) && cachedBars.length >= normalizedLimit) {
+      return cachedBars.slice(-normalizedLimit);
+    }
+  }
+
+  const url = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+    + `?secid=${encodeURIComponent(secid)}`
+    + '&fields1=f1,f2,f3,f4,f5,f6'
+    + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58'
+    + '&klt=101&fqt=1&beg=0&end=20500101'
+    + `&lmt=${normalizedLimit}`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs || 10000, 3000), 20000), {
+    Referer: 'https://quote.eastmoney.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+  const parsed = JSON.parse(body);
+  const klines = parsed && parsed.data && Array.isArray(parsed.data.klines) ? parsed.data.klines : [];
+  const bars = klines.map(parseEastmoneyKline).filter(Boolean);
+
+  if (dailyKlineCache) {
+    dailyKlineCache.set(cacheKey, bars);
+  }
+  return bars.slice(-normalizedLimit);
+}
+
+function parseEastmoneyKline(row) {
+  const fields = String(row || '').split(',');
+  const date = fields[0] || '';
+  const open = optionalNumber(fields[1]);
+  const close = optionalNumber(fields[2]);
+  const high = optionalNumber(fields[3]);
+  const low = optionalNumber(fields[4]);
+  const volume = optionalNumber(fields[5]);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || close === null) {
+    return null;
+  }
+  return { date, open, close, high, low, volume };
+}
+
+function toEastmoneySecid(code) {
+  if (/^sh\d{6}$/.test(code)) {
+    return `1.${code.slice(2)}`;
+  }
+  if (/^(sz|bj)\d{6}$/.test(code)) {
+    return `0.${code.slice(2)}`;
+  }
+  return '';
+}
+
+function addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
+  if (!rule.movingAverageBelow || quote.price === null) {
+    return;
+  }
+
+  const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, rule.movingAverageDays));
+  if (!snapshot || !Number.isFinite(snapshot.average) || quote.price >= snapshot.average) {
+    return;
+  }
+
+  const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
+  const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+  const alertLabel = `跌破${snapshot.days}日线 ${formattedAverage}`;
+
+  alerts.push({
+    key: `${quote.code}:movingAverageBelow:${snapshot.days}:${formattedAverage}`,
+    code: quote.code,
+    name: displayName,
+    label: alertLabel,
+    message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+  });
+}
+
+function getMovingAverageSnapshotKey(code, days) {
+  return `${code}:${days}`;
+}
+
+async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log) {
+  const snapshots = new Map();
+  const tasks = [];
+  const limitsByCode = new Map();
+
+  for (const rule of rules) {
+    if (!hasTechnicalAlertIndicator(rule)) {
+      continue;
+    }
+
+    const quote = quotesByCode.get(rule.code);
+    if (!isUsableQuote(quote)) {
+      continue;
+    }
+
+    const limit = getTechnicalHistoryLimit(rule);
+    limitsByCode.set(rule.code, Math.max(limitsByCode.get(rule.code) || 0, limit));
+  }
+
+  for (const [code, limit] of limitsByCode.entries()) {
+    tasks.push(fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache)
+      .then((bars) => snapshots.set(code, bars))
+      .catch((error) => {
+        snapshots.set(code, []);
+        if (log) {
+          log('Technical alert data failed', {
+            code,
+            limit,
+            error: getErrorMessage(error)
+          });
+        }
+      }));
+  }
+
+  await Promise.all(tasks);
+  return snapshots;
+}
+
+function getTechnicalHistoryLimit(rule) {
+  const values = [
+    rule.bearishMovingAverageLongDays + 10,
+    rule.volumeDropAverageDays + 10,
+    rule.reboundLowVolumeAverageDays + 10,
+    rule.lowBreakDays + 10,
+    rule.rsiDays + 30,
+    rule.bollingerDays + 10,
+    90
+  ];
+  return Math.min(MAX_MOVING_AVERAGE_DAYS + 30, Math.max(...values.filter((value) => Number.isFinite(value))));
+}
+
+function addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces) {
+  const bars = technicalSnapshots.get(rule.code) || [];
+  if (bars.length === 0 || quote.price === null) {
+    return;
+  }
+
+  addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+  addMacdDeathCrossAlertIfMet(alerts, quote, displayName, rule, bars);
+  addVolumeDropAlertIfMet(alerts, quote, displayName, rule, bars);
+  addReboundLowVolumeAlertIfMet(alerts, quote, displayName, rule, bars);
+  addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+  addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars);
+  addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+}
+
+function addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces) {
+  if (!rule.bearishMovingAverage) {
+    return;
+  }
+
+  const shortAverage = calculateMovingAverageFromBars(bars, quote.price, rule.bearishMovingAverageShortDays);
+  const midAverage = calculateMovingAverageFromBars(bars, quote.price, rule.bearishMovingAverageMidDays);
+  const longAverage = calculateMovingAverageFromBars(bars, quote.price, rule.bearishMovingAverageLongDays);
+  if (shortAverage === null || midAverage === null || longAverage === null || !(shortAverage < midAverage && midAverage < longAverage)) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:bearishMovingAverage:${rule.bearishMovingAverageShortDays}-${rule.bearishMovingAverageMidDays}-${rule.bearishMovingAverageLongDays}`,
+    code: quote.code,
+    name: displayName,
+    label: `均线空头排列 MA${rule.bearishMovingAverageShortDays}<MA${rule.bearishMovingAverageMidDays}<MA${rule.bearishMovingAverageLongDays}`,
+    message: `${displayName} 均线空头排列，MA${rule.bearishMovingAverageShortDays} ${shortAverage.toFixed(priceDecimalPlaces)} < MA${rule.bearishMovingAverageMidDays} ${midAverage.toFixed(priceDecimalPlaces)} < MA${rule.bearishMovingAverageLongDays} ${longAverage.toFixed(priceDecimalPlaces)}`
+  });
+}
+
+function addMacdDeathCrossAlertIfMet(alerts, quote, displayName, rule, bars) {
+  if (!rule.macdDeathCross) {
+    return;
+  }
+
+  const previousCloses = getPreviousCloses(bars, 120);
+  if (previousCloses.length < 35) {
+    return;
+  }
+
+  const previousMacd = calculateMacd(previousCloses);
+  const currentMacd = calculateMacd([...previousCloses, quote.price]);
+  if (!previousMacd || !currentMacd) {
+    return;
+  }
+
+  const crossed = previousMacd.dif >= previousMacd.dea && currentMacd.dif < currentMacd.dea;
+  const belowZero = currentMacd.dif < 0 && currentMacd.dea < 0;
+  if (!crossed || (rule.macdBelowZeroOnly && !belowZero)) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:macdDeathCross:${rule.macdBelowZeroOnly ? 'belowZero' : 'any'}`,
+    code: quote.code,
+    name: displayName,
+    label: rule.macdBelowZeroOnly ? 'MACD 零轴下死叉' : 'MACD 死叉',
+    message: `${displayName} ${rule.macdBelowZeroOnly ? 'MACD 零轴下死叉' : 'MACD 死叉'}，DIF ${currentMacd.dif.toFixed(3)}，DEA ${currentMacd.dea.toFixed(3)}`
+  });
+}
+
+function addVolumeDropAlertIfMet(alerts, quote, displayName, rule, bars) {
+  if (!rule.volumeDrop || quote.changePercent === null || quote.changePercent > -rule.volumeDropPercent) {
+    return;
+  }
+
+  const volumeSnapshot = calculateVolumeSnapshot(bars, rule.volumeDropAverageDays);
+  if (!volumeSnapshot || volumeSnapshot.current < volumeSnapshot.average * rule.volumeDropMultiplier) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:volumeDrop:${rule.volumeDropPercent}:${rule.volumeDropMultiplier}:${rule.volumeDropAverageDays}`,
+    code: quote.code,
+    name: displayName,
+    label: `放量下跌 ${rule.volumeDropMultiplier.toFixed(1)}x`,
+    message: `${displayName} 放量下跌，跌幅 ${quote.changePercent.toFixed(2)}%，成交量约为 ${rule.volumeDropAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)} 倍`
+  });
+}
+
+function addReboundLowVolumeAlertIfMet(alerts, quote, displayName, rule, bars) {
+  if (!rule.reboundLowVolume || quote.changePercent === null || quote.changePercent < rule.reboundRisePercent) {
+    return;
+  }
+
+  const volumeSnapshot = calculateVolumeSnapshot(bars, rule.reboundLowVolumeAverageDays);
+  if (!volumeSnapshot || volumeSnapshot.current > volumeSnapshot.average * rule.reboundLowVolumeRatio) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:reboundLowVolume:${rule.reboundRisePercent}:${rule.reboundLowVolumeRatio}:${rule.reboundLowVolumeAverageDays}`,
+    code: quote.code,
+    name: displayName,
+    label: `反弹缩量 ${(rule.reboundLowVolumeRatio * 100).toFixed(0)}%`,
+    message: `${displayName} 反弹缩量，涨幅 ${quote.changePercent.toFixed(2)}%，成交量仅为 ${rule.reboundLowVolumeAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)}`
+  });
+}
+
+function addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces) {
+  if (!rule.lowBreak) {
+    return;
+  }
+
+  const previousLows = getPreviousBars(bars)
+    .map((bar) => bar.low)
+    .filter((low) => Number.isFinite(low))
+    .slice(-rule.lowBreakDays);
+  if (previousLows.length < rule.lowBreakDays) {
+    return;
+  }
+
+  const lowest = Math.min(...previousLows);
+  if (quote.price >= lowest) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:lowBreak:${rule.lowBreakDays}:${lowest.toFixed(priceDecimalPlaces)}`,
+    code: quote.code,
+    name: displayName,
+    label: `跌破${rule.lowBreakDays}日低点 ${lowest.toFixed(priceDecimalPlaces)}`,
+    message: `${displayName} 跌破${rule.lowBreakDays}日低点，当前 ${quote.price.toFixed(priceDecimalPlaces)}，前低 ${lowest.toFixed(priceDecimalPlaces)}`
+  });
+}
+
+function addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars) {
+  if (!rule.rsiWeak) {
+    return;
+  }
+
+  const rsi = calculateRsi([...getPreviousCloses(bars, rule.rsiDays + 20), quote.price], rule.rsiDays);
+  if (rsi === null || rsi >= rule.rsiBelow) {
+    return;
+  }
+
+  alerts.push({
+    key: `${quote.code}:rsiWeak:${rule.rsiDays}:${rule.rsiBelow}`,
+    code: quote.code,
+    name: displayName,
+    label: `RSI${rule.rsiDays} < ${rule.rsiBelow}`,
+    message: `${displayName} RSI 走弱，RSI${rule.rsiDays} ${rsi.toFixed(1)} < ${rule.rsiBelow}`
+  });
+}
+
+function addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces) {
+  if (!rule.bollingerBelow) {
+    return;
+  }
+
+  const bands = calculateBollingerBands([...getPreviousCloses(bars, rule.bollingerDays - 1), quote.price], rule.bollingerDays, rule.bollingerStdDev);
+  if (!bands) {
+    return;
+  }
+
+  const target = rule.bollingerBelow === 'lower' ? bands.lower : bands.middle;
+  if (quote.price >= target) {
+    return;
+  }
+
+  const label = rule.bollingerBelow === 'lower' ? '跌破布林下轨' : '跌破布林中轨';
+  alerts.push({
+    key: `${quote.code}:bollingerBelow:${rule.bollingerBelow}:${rule.bollingerDays}:${target.toFixed(priceDecimalPlaces)}`,
+    code: quote.code,
+    name: displayName,
+    label: `${label} ${target.toFixed(priceDecimalPlaces)}`,
+    message: `${displayName} ${label}，当前 ${quote.price.toFixed(priceDecimalPlaces)}，阈值 ${target.toFixed(priceDecimalPlaces)}`
+  });
+}
+
+function calculateMovingAverageFromBars(bars, currentPrice, days) {
+  const previousCloses = getPreviousCloses(bars, days - 1);
+  if (previousCloses.length < days - 1 || !Number.isFinite(currentPrice)) {
+    return null;
+  }
+
+  const closes = [...previousCloses, currentPrice];
+  return closes.reduce((sum, close) => sum + close, 0) / closes.length;
+}
+
+function getPreviousBars(bars) {
+  const today = getShanghaiDateString();
+  return bars.filter((bar) => bar.date !== today);
+}
+
+function getPreviousCloses(bars, limit) {
+  return getPreviousBars(bars)
+    .map((bar) => bar.close)
+    .filter((close) => Number.isFinite(close))
+    .slice(-limit);
+}
+
+function calculateVolumeSnapshot(bars, averageDays) {
+  const today = getShanghaiDateString();
+  const currentBar = [...bars].reverse().find((bar) => bar.date === today && Number.isFinite(bar.volume));
+  if (!currentBar) {
+    return null;
+  }
+
+  const previousVolumes = getPreviousBars(bars)
+    .map((bar) => bar.volume)
+    .filter((volume) => Number.isFinite(volume) && volume > 0)
+    .slice(-averageDays);
+  if (previousVolumes.length < averageDays) {
+    return null;
+  }
+
+  return {
+    current: currentBar.volume,
+    average: previousVolumes.reduce((sum, volume) => sum + volume, 0) / previousVolumes.length
+  };
+}
+
+function calculateMacd(closes) {
+  if (!Array.isArray(closes) || closes.length < 35) {
+    return null;
+  }
+
+  let ema12 = closes[0];
+  let ema26 = closes[0];
+  let dea = 0;
+  for (const close of closes) {
+    ema12 = ema12 * (11 / 13) + close * (2 / 13);
+    ema26 = ema26 * (25 / 27) + close * (2 / 27);
+    const dif = ema12 - ema26;
+    dea = dea * (8 / 10) + dif * (2 / 10);
+  }
+
+  const dif = ema12 - ema26;
+  return {
+    dif,
+    dea,
+    macd: (dif - dea) * 2
+  };
+}
+
+function calculateRsi(closes, days) {
+  if (!Array.isArray(closes) || closes.length < days + 1) {
+    return null;
+  }
+
+  const recent = closes.slice(-(days + 1));
+  let gain = 0;
+  let loss = 0;
+  for (let index = 1; index < recent.length; index += 1) {
+    const change = recent[index] - recent[index - 1];
+    if (change > 0) {
+      gain += change;
+    } else {
+      loss -= change;
+    }
+  }
+
+  if (loss === 0) {
+    return gain === 0 ? 50 : 100;
+  }
+  return 100 - (100 / (1 + (gain / loss)));
+}
+
+function calculateBollingerBands(closes, days, stdDevMultiplier) {
+  if (!Array.isArray(closes) || closes.length < days) {
+    return null;
+  }
+
+  const recent = closes.slice(-days);
+  const middle = recent.reduce((sum, close) => sum + close, 0) / recent.length;
+  const variance = recent.reduce((sum, close) => sum + Math.pow(close - middle, 2), 0) / recent.length;
+  const stdDev = Math.sqrt(variance);
+  return {
+    middle,
+    upper: middle + stdDev * stdDevMultiplier,
+    lower: middle - stdDev * stdDevMultiplier
+  };
 }
 
 function requestJson(url, options) {

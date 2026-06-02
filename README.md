@@ -96,12 +96,35 @@
       "name": "兆易创新",
       "priceAbove": 180,
       "priceBelow": 160
+    },
+    {
+      "code": "sh600519",
+      "name": "MA20 example",
+      "movingAverageDays": 20
+    },
+    {
+      "code": "sz000001",
+      "name": "trend risk example",
+      "bearishMovingAverage": true,
+      "macdDeathCross": true,
+      "macdBelowZeroOnly": true,
+      "volumeDrop": true,
+      "volumeDropPercent": 2,
+      "volumeDropMultiplier": 1.5,
+      "reboundLowVolume": true,
+      "reboundLowVolumeRatio": 0.8,
+      "lowBreakDays": 20,
+      "rsiWeak": true,
+      "rsiBelow": 50,
+      "bollingerBelow": "middle"
     }
   ],
   "marketMonitoring.enableAlerts": true,
   "marketMonitoring.enableAlertNotifications": true
 }
 ```
+
+When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets a default `movingAverageBelow: true` alert with `movingAverageDays: 20`. Add an explicit alert rule with `movingAverageBelow: false` to disable it for a symbol.
 
 预警触发后会：
 

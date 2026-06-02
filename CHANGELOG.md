@@ -8,6 +8,20 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.0] - 2026-06-02
+
+### Added
+
+- Added default MA20 downside alerts for all configured symbols when quote alerts are enabled.
+- Added configurable moving-average downside alerts with custom `movingAverageDays`.
+- Added trend-risk alert indicators for bearish moving-average alignment, MACD death crosses, volume-backed drops, low-volume rebounds, recent-low breakdowns, RSI weakness, and Bollinger band breakdowns.
+- Added daily K-line fetching and in-session caching for technical alert evaluation.
+
+### Changed
+
+- Bumped the extension version from `0.1.9` to `0.2.0`.
+- Extended alert settings schema and README examples for the new technical indicators.
+
 ## [0.1.9] - 2026-06-02
 
 ### Added
