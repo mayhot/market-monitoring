@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.1] - 2026-06-02
+
+### Changed
+
+- Bumped the extension version from `0.2.0` to `0.2.1`.
+
+### Fixed
+
+- Kept the bottom index dock anchored below the scrollable group list when a group contains many symbols.
+
 ## [0.2.0] - 2026-06-02
 
 ### Added

@@ -997,6 +997,7 @@ class QuotesViewProvider {
 
     html {
       width: 100%;
+      height: 100%;
     }
 
     body {
@@ -1004,9 +1005,9 @@ class QuotesViewProvider {
       padding: 12px;
       width: 100%;
       max-width: 100%;
-      min-height: 100vh;
-      max-height: 100vh;
-      overflow-y: auto;
+      height: 100vh;
+      min-height: 0;
+      overflow: hidden;
       color: var(--vscode-foreground);
       background: var(--surface);
       font-family: var(--vscode-font-family);
@@ -1330,6 +1331,7 @@ class QuotesViewProvider {
       min-height: 0;
       min-width: 0;
       max-width: 100%;
+      overflow-y: auto;
       padding-bottom: 10px;
     }
 
@@ -1692,12 +1694,11 @@ class QuotesViewProvider {
     }
 
     .index-dock {
-      position: sticky;
-      bottom: 0;
       display: grid;
       grid-template-columns: minmax(0, 1fr) max-content;
       gap: 8px;
       align-items: flex-end;
+      flex: 0 0 auto;
       min-width: 0;
       max-width: 100%;
       padding-top: 8px;
