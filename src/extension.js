@@ -1595,8 +1595,6 @@ class QuotesViewProvider {
     }
 
     .quote.alert {
-      border-left: 3px solid var(--vscode-notificationsWarningIcon-foreground, var(--up));
-      padding-left: 5px;
       background: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, var(--up)) 8%, transparent);
     }
 
@@ -1611,9 +1609,19 @@ class QuotesViewProvider {
     }
 
     .alert-badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
       margin-left: 6px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
       color: var(--vscode-notificationsWarningIcon-foreground, var(--up));
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      vertical-align: text-bottom;
     }
 
     .code,
@@ -3034,7 +3042,7 @@ class QuotesViewProvider {
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '">' + escapeHtml(t('alert')) + '</span>' : '') + '</div>' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '" aria-label="' + escapeHtml(t('alert')) + '">!</span>' : '') + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
