@@ -8,6 +8,19 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.1.9] - 2026-06-02
+
+### Added
+
+- Added an optional AI assistant entry for natural-language group and symbol management.
+- Added AI provider settings for OpenAI-compatible, Azure OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Ollama, LM Studio, and custom endpoints.
+- Added `Market Monitoring: Configure Quote Columns` for ordering, showing, and hiding quote table columns through VS Code commands.
+
+### Changed
+
+- Bumped the extension version from `0.1.8` to `0.1.9`.
+- Moved quote column and language configuration guidance toward VS Code Settings and command-based configuration.
+
 ## [0.1.8] - 2026-05-29
 
 ### Changed

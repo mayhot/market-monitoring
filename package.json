@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -24,6 +24,8 @@
     "onCommand:marketMonitoring.exportCsv",
     "onCommand:marketMonitoring.start",
     "onCommand:marketMonitoring.stop",
+    "onCommand:marketMonitoring.openAiAssistant",
+    "onCommand:marketMonitoring.configureQuoteColumns",
     "onCommand:marketMonitoring.openSettings"
   ],
   "main": "./src/extension.js",
@@ -53,6 +55,16 @@
         "command": "marketMonitoring.stop",
         "title": "Market Monitoring: Stop",
         "icon": "$(debug-pause)"
+      },
+      {
+        "command": "marketMonitoring.openAiAssistant",
+        "title": "Market Monitoring: AI Assistant",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "marketMonitoring.configureQuoteColumns",
+        "title": "Market Monitoring: Configure Quote Columns",
+        "icon": "$(list-ordered)"
       },
       {
         "command": "marketMonitoring.openSettings",
@@ -97,6 +109,16 @@
           "group": "navigation"
         },
         {
+          "command": "marketMonitoring.openAiAssistant",
+          "when": "view == marketMonitoring.quotesView && config.marketMonitoring.ai.enabled",
+          "group": "navigation"
+        },
+        {
+          "command": "marketMonitoring.configureQuoteColumns",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "navigation"
+        },
+        {
           "command": "marketMonitoring.openSettings",
           "when": "view == marketMonitoring.quotesView",
           "group": "navigation"
@@ -117,6 +139,13 @@
         },
         {
           "command": "marketMonitoring.stop"
+        },
+        {
+          "command": "marketMonitoring.openAiAssistant",
+          "when": "config.marketMonitoring.ai.enabled"
+        },
+        {
+          "command": "marketMonitoring.configureQuoteColumns"
         },
         {
           "command": "marketMonitoring.openSettings"
@@ -260,7 +289,7 @@
             "price",
             "changePercent"
           ],
-          "markdownDescription": "Columns displayed in the quote table.",
+          "markdownDescription": "Columns displayed in the quote table. The array order controls the left-to-right column order. For button-style move up/down controls, run `Market Monitoring: Configure Quote Columns`.",
           "items": {
             "type": "string",
             "enum": [
@@ -348,6 +377,74 @@
           "type": "boolean",
           "default": true,
           "description": "Show VS Code notifications when quote alerts are newly triggered."
+        },
+        "marketMonitoring.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show and enable the AI assistant entry for natural-language group and symbol management."
+        },
+        "marketMonitoring.ai.provider": {
+          "type": "string",
+          "default": "disabled",
+          "enum": [
+            "disabled",
+            "openai",
+            "azureOpenAI",
+            "anthropic",
+            "gemini",
+            "deepseek",
+            "openrouter",
+            "ollama",
+            "lmStudio",
+            "customOpenAICompatible"
+          ],
+          "enumDescriptions": [
+            "Disable AI assistant.",
+            "OpenAI Chat Completions API.",
+            "Azure OpenAI Chat Completions API.",
+            "Anthropic Messages API.",
+            "Google Gemini generateContent API.",
+            "DeepSeek OpenAI-compatible API.",
+            "OpenRouter OpenAI-compatible API.",
+            "Local Ollama OpenAI-compatible API.",
+            "Local LM Studio OpenAI-compatible API.",
+            "Any OpenAI-compatible /chat/completions endpoint."
+          ],
+          "markdownDescription": "AI provider used by the natural-language group and symbol manager."
+        },
+        "marketMonitoring.ai.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "AI model name. Examples: `gpt-4.1-mini`, `claude-3-5-sonnet-latest`, `gemini-1.5-flash`, `deepseek-chat`, `openai/gpt-4o-mini`, `llama3.1`."
+        },
+        "marketMonitoring.ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "API key for the selected AI provider. Leave empty for local providers such as Ollama or LM Studio."
+        },
+        "marketMonitoring.ai.baseUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional API base URL. For OpenAI-compatible providers this should be the API root, for example `https://api.openai.com/v1` or `http://localhost:11434/v1`."
+        },
+        "marketMonitoring.ai.azureApiVersion": {
+          "type": "string",
+          "default": "2024-06-01",
+          "markdownDescription": "Azure OpenAI API version. `marketMonitoring.ai.model` is treated as the Azure deployment name."
+        },
+        "marketMonitoring.ai.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "AI assistant sampling temperature."
+        },
+        "marketMonitoring.ai.timeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 120000,
+          "description": "AI request timeout in milliseconds."
         },
         "marketMonitoring.alerts": {
           "type": "array",

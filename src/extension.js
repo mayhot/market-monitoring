@@ -12,12 +12,42 @@ const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
+const QUOTE_COLUMN_LABELS = {
+  name: 'Name',
+  alias: 'Alias',
+  code: 'Code',
+  price: 'Price',
+  changePercent: 'Change %',
+  change: 'Change',
+  cost: 'Cost',
+  holding: 'Holding',
+  position: 'Position',
+  netProfit: 'Net profit'
+};
 const DEFAULT_GROUP_SUMMARY_METRICS = [];
 const AVAILABLE_GROUP_SUMMARY_METRICS = ['totalAssets', 'dailyProfit', 'dailyProfitPercent'];
-const LANGUAGE_LABELS = {
-  auto: 'Auto',
-  'zh-CN': '中文',
-  'en-US': 'English'
+const AI_LOG_TEXT_LIMIT = 2000;
+const AI_PROVIDERS = ['disabled', 'openai', 'azureOpenAI', 'anthropic', 'gemini', 'deepseek', 'openrouter', 'ollama', 'lmStudio', 'customOpenAICompatible'];
+const OPENAI_COMPATIBLE_AI_PROVIDERS = ['openai', 'deepseek', 'openrouter', 'ollama', 'lmStudio', 'customOpenAICompatible'];
+const DEFAULT_AI_MODELS = {
+  openai: 'gpt-4.1-mini',
+  azureOpenAI: '',
+  anthropic: 'claude-3-5-sonnet-latest',
+  gemini: 'gemini-1.5-flash',
+  deepseek: 'deepseek-chat',
+  openrouter: 'openai/gpt-4o-mini',
+  ollama: 'llama3.1',
+  lmStudio: 'local-model',
+  customOpenAICompatible: ''
+};
+const DEFAULT_AI_BASE_URLS = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
+  deepseek: 'https://api.deepseek.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  ollama: 'http://localhost:11434/v1',
+  lmStudio: 'http://localhost:1234/v1'
 };
 const INDEX_SYMBOLS = [
   { code: 'sh000985', name: '中证全指', group: '指数' },
@@ -41,9 +71,18 @@ function activate(context) {
     vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
     vscode.commands.registerCommand('marketMonitoring.stop', () => monitor.stop(true)),
+    vscode.commands.registerCommand('marketMonitoring.openAiAssistant', async () => {
+      if (!readAiConfig(vscode.workspace.getConfiguration(CONFIG_SECTION)).enabled) {
+        vscode.window.showInformationMessage('AI 入口未开启，请先在 Market Monitoring 设置中开启 marketMonitoring.ai.enabled。');
+        return;
+      }
+      await vscode.commands.executeCommand('workbench.view.extension.marketMonitoring');
+      provider.openAiAssistant();
+    }),
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${getExtensionId(context)}`);
     }),
+    vscode.commands.registerCommand('marketMonitoring.configureQuoteColumns', () => configureQuoteColumns()),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_SECTION)) {
         monitor.reloadConfiguration();
@@ -64,6 +103,8 @@ function activate(context) {
       monitor.exportCsv();
     } else if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
+    } else if (message.command === 'aiManage') {
+      monitor.aiManage(message.prompt, message.requestId);
     } else if (message.command === 'webviewReady') {
       monitor.webviewReady();
     } else if (message.command === 'webviewError') {
@@ -73,12 +114,6 @@ function activate(context) {
         line: message.line || 0,
         column: message.column || 0
       });
-    } else if (message.command === 'updateQuoteColumns') {
-      monitor.updateQuoteColumns(message.columns);
-    } else if (message.command === 'updateGroupSummaryMetrics') {
-      monitor.updateGroupSummaryMetrics(message.metrics);
-    } else if (message.command === 'updateLanguage') {
-      monitor.updateLanguage(message.language);
     } else if (message.command === 'start') {
       monitor.start(true);
     } else if (message.command === 'stop') {
@@ -106,6 +141,109 @@ function activate(context) {
 }
 
 function deactivate() {}
+
+async function configureQuoteColumns() {
+  let columns = sanitizeQuoteColumns(vscode.workspace.getConfiguration(CONFIG_SECTION).get('quoteColumns', DEFAULT_QUOTE_COLUMNS));
+
+  while (true) {
+    const hiddenColumns = AVAILABLE_QUOTE_COLUMNS.filter((column) => !columns.includes(column));
+    const picked = await vscode.window.showQuickPick([
+      ...columns.map((column, index) => ({
+        label: `$(check) ${index + 1}. ${getQuoteColumnLabel(column)}`,
+        description: column,
+        detail: 'Visible. Select to move up, move down, or hide.',
+        column,
+        visible: true
+      })),
+      ...hiddenColumns.map((column) => ({
+        label: `$(add) ${getQuoteColumnLabel(column)}`,
+        description: column,
+        detail: 'Hidden. Select to add it to the end.',
+        column,
+        visible: false
+      })),
+      {
+        label: '$(settings-gear) Open Quote Columns Setting',
+        detail: 'Open the native VS Code setting.',
+        action: 'openSetting'
+      },
+      {
+        label: '$(check) Done',
+        action: 'done'
+      }
+    ], {
+      title: 'Configure Quote Columns',
+      placeHolder: 'Select a column to move up, move down, show, or hide'
+    });
+
+    if (!picked || picked.action === 'done') {
+      return;
+    }
+    if (picked.action === 'openSetting') {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'marketMonitoring.quoteColumns');
+      return;
+    }
+    if (!picked.visible) {
+      columns = sanitizeQuoteColumns([...columns, picked.column]);
+      await updateConfiguredQuoteColumns(columns);
+      continue;
+    }
+
+    const index = columns.indexOf(picked.column);
+    if (index < 0) {
+      continue;
+    }
+
+    const actions = [];
+    if (index > 0) {
+      actions.push({ label: '$(arrow-up) Move Up', action: 'up' });
+    }
+    if (index < columns.length - 1) {
+      actions.push({ label: '$(arrow-down) Move Down', action: 'down' });
+    }
+    if (columns.length > 1) {
+      actions.push({ label: '$(eye-closed) Hide Column', action: 'hide' });
+    }
+    actions.push({ label: '$(debug-restart) Reset Default Columns', action: 'reset' });
+    actions.push({ label: '$(arrow-left) Back', action: 'back' });
+
+    const action = await vscode.window.showQuickPick(actions, {
+      title: getQuoteColumnLabel(picked.column),
+      placeHolder: 'Choose an action'
+    });
+    if (!action || action.action === 'back') {
+      continue;
+    }
+    if (action.action === 'up') {
+      columns = moveArrayItem(columns, index, index - 1);
+    } else if (action.action === 'down') {
+      columns = moveArrayItem(columns, index, index + 1);
+    } else if (action.action === 'hide') {
+      columns = columns.filter((column) => column !== picked.column);
+    } else if (action.action === 'reset') {
+      columns = DEFAULT_QUOTE_COLUMNS;
+    }
+
+    columns = sanitizeQuoteColumns(columns);
+    await updateConfiguredQuoteColumns(columns);
+  }
+}
+
+async function updateConfiguredQuoteColumns(columns) {
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  await config.update('quoteColumns', sanitizeQuoteColumns(columns), getConfigTarget(config, 'quoteColumns'));
+}
+
+function moveArrayItem(items, fromIndex, toIndex) {
+  const nextItems = [...items];
+  const [item] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, item);
+  return nextItems;
+}
+
+function getQuoteColumnLabel(column) {
+  return QUOTE_COLUMN_LABELS[column] || column;
+}
 
 class MarketMonitor {
   constructor(context, provider, output) {
@@ -233,6 +371,114 @@ class MarketMonitor {
     }
   }
 
+  async aiManage(prompt, requestId) {
+    const naturalLanguagePrompt = String(prompt || '').trim();
+    this.logInfo('AI manage requested', {
+      requestId,
+      promptLength: naturalLanguagePrompt.length,
+      promptPreview: truncateForLog(naturalLanguagePrompt, 500),
+      enabled: this.config.ai.enabled,
+      provider: this.config.ai.provider,
+      model: this.config.ai.model,
+      baseUrl: sanitizeUrlForLog(this.config.ai.baseUrl),
+      groups: this.config.groups.length,
+      symbols: this.config.symbols.length
+    });
+    if (!naturalLanguagePrompt) {
+      this.logWarn('AI manage rejected', { requestId, reason: 'emptyPrompt' });
+      this.provider.postAiResult(requestId, {
+        ok: false,
+        message: '请输入要执行的 AI 指令。',
+        changes: [],
+        warnings: []
+      });
+      return;
+    }
+
+    if (!this.config.ai.enabled) {
+      this.logWarn('AI manage rejected', { requestId, reason: 'aiEntryDisabled' });
+      this.provider.postAiResult(requestId, {
+        ok: false,
+        message: 'AI 入口未开启，请先在设置中开启 marketMonitoring.ai.enabled。',
+        changes: [],
+        warnings: []
+      });
+      return;
+    }
+
+    if (!isAiConfigured(this.config.ai)) {
+      this.logWarn('AI manage rejected', {
+        requestId,
+        reason: 'aiNotConfigured',
+        provider: this.config.ai.provider,
+        model: this.config.ai.model,
+        hasApiKey: Boolean(this.config.ai.apiKey),
+        baseUrl: sanitizeUrlForLog(this.config.ai.baseUrl)
+      });
+      this.provider.postAiResult(requestId, {
+        ok: false,
+        message: '请先在设置中配置 AI Provider、Model 和 API Key（本地模型可不填 Key）。',
+        changes: [],
+        warnings: []
+      });
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Market Monitoring AI 正在处理指令',
+        cancellable: false
+      }, async () => {
+        const plan = await createAiManagementPlan(naturalLanguagePrompt, this.config, this.output);
+        return applyAiManagementPlan(plan, this.config, this.output);
+      });
+
+      if (result.changed) {
+        await updateConfiguredGroups(result.groups);
+        await updateConfiguredSymbols(result.symbols);
+        this.config = {
+          ...this.config,
+          groups: normalizeGroups(result.groups, result.symbols),
+          symbols: result.symbols
+        };
+        this.updateViews(getMarketPhase().name);
+        this.refresh(true);
+      }
+
+      this.logInfo('AI manage completed', {
+        requestId,
+        changed: result.changed,
+        changes: result.changes.length,
+        warnings: result.warnings.length,
+        elapsedMs: Date.now() - startedAt,
+        summary: result.summary
+      });
+      this.provider.postAiResult(requestId, {
+        ok: true,
+        message: result.summary,
+        changes: result.changes,
+        warnings: result.warnings
+      });
+      vscode.window.showInformationMessage(result.summary);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.logError('AI manage failed', {
+        requestId,
+        elapsedMs: Date.now() - startedAt,
+        error: message
+      });
+      this.provider.postAiResult(requestId, {
+        ok: false,
+        message: `AI 指令执行失败：${message}`,
+        changes: [],
+        warnings: []
+      });
+      vscode.window.showErrorMessage(`AI 指令执行失败：${message}`);
+    }
+  }
+
   async addGroup(name) {
     const normalizedName = normalizeGroupName(name);
     if (!normalizedName) {
@@ -345,40 +591,6 @@ class MarketMonitor {
     this.config = {
       ...this.config,
       symbols: nextSymbols
-    };
-    this.updateViews(getMarketPhase().name);
-  }
-
-  async updateQuoteColumns(columns) {
-    const nextColumns = sanitizeQuoteColumns(columns);
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    await config.update('quoteColumns', nextColumns, getConfigTarget(config, 'quoteColumns'));
-    this.config = {
-      ...this.config,
-      quoteColumns: nextColumns
-    };
-    this.updateViews(getMarketPhase().name);
-  }
-
-  async updateGroupSummaryMetrics(metrics) {
-    const nextMetrics = sanitizeGroupSummaryMetrics(metrics);
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    await config.update('groupSummaryMetrics', nextMetrics, getConfigTarget(config, 'groupSummaryMetrics'));
-    this.config = {
-      ...this.config,
-      groupSummaryMetrics: nextMetrics
-    };
-    this.updateViews(getMarketPhase().name);
-  }
-
-  async updateLanguage(language) {
-    const nextLanguage = sanitizeLanguage(language);
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    await config.update('language', nextLanguage, getConfigTarget(config, 'language'));
-    this.config = {
-      ...this.config,
-      language: nextLanguage,
-      locale: resolveLanguage(nextLanguage)
     };
     this.updateViews(getMarketPhase().name);
   }
@@ -630,6 +842,7 @@ class MarketMonitor {
       quoteColumns: this.config.quoteColumns,
       groupSummaryMetrics: this.config.groupSummaryMetrics,
       symbolCount: this.config.symbols.length,
+      ai: createPublicAiConfig(this.config.ai),
       configuredGroups: this.config.groups,
       configuredSymbols: this.config.symbols,
       defaultIndexCode: DEFAULT_INDEX_CODE,
@@ -644,6 +857,7 @@ class QuotesViewProvider {
     this.extensionUri = extensionUri;
     this.view = undefined;
     this.messageHandler = undefined;
+    this.openAiOnResolve = false;
     this.snapshot = {
       running: false,
       loading: false,
@@ -665,6 +879,7 @@ class QuotesViewProvider {
       quoteColumns: DEFAULT_QUOTE_COLUMNS,
       groupSummaryMetrics: DEFAULT_GROUP_SUMMARY_METRICS,
       symbolCount: 0,
+      ai: createPublicAiConfig(readAiConfig(vscode.workspace.getConfiguration(CONFIG_SECTION))),
       configuredGroups: [DEFAULT_GROUP],
       configuredSymbols: [],
       defaultIndexCode: DEFAULT_INDEX_CODE,
@@ -698,6 +913,10 @@ class QuotesViewProvider {
       }
     });
     this.update(this.snapshot);
+    if (this.openAiOnResolve) {
+      this.openAiOnResolve = false;
+      this.openAiAssistant();
+    }
   }
 
   update(snapshot) {
@@ -715,6 +934,25 @@ class QuotesViewProvider {
         query,
         results,
         error
+      });
+    }
+  }
+
+  openAiAssistant() {
+    if (this.view) {
+      this.view.show(true);
+      this.view.webview.postMessage({ type: 'openAiAssistant' });
+      return;
+    }
+    this.openAiOnResolve = true;
+  }
+
+  postAiResult(requestId, result) {
+    if (this.view) {
+      this.view.webview.postMessage({
+        type: 'aiResult',
+        requestId,
+        result
       });
     }
   }
@@ -856,7 +1094,7 @@ class QuotesViewProvider {
       grid-template-columns: minmax(0, 1fr) 30px;
     }
 
-    .config-panel {
+    .ai-panel {
       display: grid;
       gap: 8px;
       margin-bottom: 10px;
@@ -866,90 +1104,68 @@ class QuotesViewProvider {
       background: color-mix(in srgb, var(--surface-soft) 52%, transparent);
     }
 
-    .config-panel[hidden] {
+    .ai-panel[hidden] {
       display: none;
     }
 
-    .config-panel-title {
+    .ai-panel-header {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
       gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      min-width: 0;
+    }
+
+    .ai-panel-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       color: var(--vscode-sideBarTitle-foreground);
     }
 
-    .column-config-list {
-      display: grid;
-      gap: 5px;
-    }
-
-    .summary-config-list {
-      display: grid;
-      gap: 5px;
-    }
-
-    .config-select-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-      gap: 8px;
-      align-items: center;
-      min-width: 0;
-    }
-
-    .column-config-item {
-      display: grid;
-      grid-template-columns: 24px minmax(0, 1fr) 28px 28px;
-      gap: 5px;
-      align-items: center;
-      min-width: 0;
-      padding: 4px;
-      border: 1px solid var(--border);
+    .ai-input {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      border: 1px solid var(--vscode-input-border, transparent);
       border-radius: 5px;
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      padding: 6px 7px;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      font: inherit;
+      outline: none;
     }
 
-    .column-config-item label {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .ai-input:focus {
+      border-color: var(--focus);
+      outline: 1px solid transparent;
     }
 
-    .column-config-item input {
-      min-height: 0;
-      width: auto;
-      margin: 0;
-    }
-
-    .summary-config-item {
-      display: grid;
-      grid-template-columns: 24px minmax(0, 1fr);
-      gap: 5px;
-      align-items: center;
-      min-width: 0;
-      padding: 4px;
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
-    }
-
-    .summary-config-item label {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .summary-config-item input {
-      min-height: 0;
-      width: auto;
-      margin: 0;
-    }
-
-    .config-actions {
+    .ai-actions {
       display: flex;
-      justify-content: flex-end;
       gap: 6px;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+
+    .ai-result {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .ai-result.error {
+      color: var(--vscode-errorForeground);
+    }
+
+    .ai-result-list {
+      margin: 0;
+      padding-left: 18px;
+      min-width: 0;
     }
 
     .symbol-search-row {
@@ -1592,13 +1808,13 @@ class QuotesViewProvider {
     <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新">↻</button>
     <button class="secondary icon-button" id="import-csv" title="导入 CSV" aria-label="导入 CSV">⇧</button>
     <button class="secondary icon-button" id="export-csv" title="导出 CSV" aria-label="导出 CSV">⇩</button>
-    <button class="secondary icon-button" id="settings" title="设置" aria-label="设置">⚙</button>
+    <button class="secondary icon-button" id="ai-assistant" title="AI" aria-label="AI" hidden>🤖</button>
   </div>
   <form class="group-form" id="group-form">
     <input id="group-name" name="group" placeholder="新增分组" autocomplete="off">
     <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
-  <section class="config-panel" id="config-panel" hidden></section>
+  <section class="ai-panel" id="ai-panel" hidden></section>
   <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
   <footer class="index-dock">
@@ -1613,7 +1829,6 @@ class QuotesViewProvider {
     const defaultGroupName = ${JSON.stringify(DEFAULT_GROUP)};
     const availableQuoteColumns = ${JSON.stringify(AVAILABLE_QUOTE_COLUMNS)};
     const availableGroupSummaryMetrics = ${JSON.stringify(AVAILABLE_GROUP_SUMMARY_METRICS)};
-    const languageLabels = ${JSON.stringify(LANGUAGE_LABELS)};
     const i18n = {
       'zh-CN': {
         notStarted: '未启动',
@@ -1670,7 +1885,16 @@ class QuotesViewProvider {
         cost: '成本',
         holding: '持仓',
         position: '仓位',
-        netProfit: '净收益额'
+        netProfit: '净收益额',
+        aiAssistant: 'AI 助手',
+        aiPromptPlaceholder: '例如：新建“观察”分组，把贵州茅台和中际旭创加入观察；把兆易创新移到自选',
+        aiRun: '执行',
+        aiRunning: '执行中...',
+        aiOpenSettings: '配置 AI',
+        aiNotConfigured: '未配置 AI。请先配置 Provider、Model 和 API Key。',
+        aiReady: '自然语言管理分组和标的',
+        aiChanges: '修改',
+        aiWarnings: '提醒'
       },
       'en-US': {
         notStarted: 'Not started',
@@ -1727,7 +1951,16 @@ class QuotesViewProvider {
         cost: 'Cost',
         holding: 'Holding',
         position: 'Position',
-        netProfit: 'Net profit'
+        netProfit: 'Net profit',
+        aiAssistant: 'AI Assistant',
+        aiPromptPlaceholder: 'Example: create a Watch group, add Kweichow Moutai and Zhongji Innolight to Watch, move GigaDevice to Favorites',
+        aiRun: 'Run',
+        aiRunning: 'Running...',
+        aiOpenSettings: 'Configure AI',
+        aiNotConfigured: 'AI is not configured. Configure Provider, Model, and API Key first.',
+        aiReady: 'Manage groups and symbols with natural language',
+        aiChanges: 'Changes',
+        aiWarnings: 'Warnings'
       }
     };
     let viewState = vscode.getState() || {};
@@ -1737,10 +1970,10 @@ class QuotesViewProvider {
     const refresh = document.getElementById('refresh');
     const importCsv = document.getElementById('import-csv');
     const exportCsv = document.getElementById('export-csv');
-    const settings = document.getElementById('settings');
+    const aiAssistant = document.getElementById('ai-assistant');
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
-    const configPanel = document.getElementById('config-panel');
+    const aiPanel = document.getElementById('ai-panel');
     const sortHint = document.getElementById('sort-hint');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
@@ -1751,7 +1984,7 @@ class QuotesViewProvider {
     let editingGroups = viewState.editingGroups || {};
     let collapsedGroups = viewState.collapsedGroups || {};
     let addingGroups = viewState.addingGroups || {};
-    let settingsOpen = Boolean(viewState.settingsOpen);
+    let aiOpen = Boolean(viewState.aiOpen);
     let tableSort = viewState.tableSort || {};
     let columnWidths = viewState.columnWidths || {};
     let resizingColumn;
@@ -1764,16 +1997,27 @@ class QuotesViewProvider {
     let selectedSymbol;
     let symbolSearchLoading = false;
     let symbolSearchError = '';
+    let aiPrompt = viewState.aiPrompt || '';
+    let aiRequestId = 0;
+    let activeAiRequestId = 0;
+    let aiLoading = false;
+    let aiResult;
     let latestSnapshot;
     let lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
     importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
     exportCsv.addEventListener('click', () => vscode.postMessage({ command: 'exportCsv' }));
-    settings.addEventListener('click', () => {
-      settingsOpen = !settingsOpen;
+    aiAssistant.addEventListener('click', () => {
+      if (!latestSnapshot || !latestSnapshot.ai || !latestSnapshot.ai.enabled) {
+        return;
+      }
+      aiOpen = !aiOpen;
       persistViewState();
-      renderConfigPanel(latestSnapshot);
+      renderAiPanel(latestSnapshot);
+      if (aiOpen) {
+        focusAiInput();
+      }
     });
     toggle.addEventListener('click', () => {
       const running = toggle.dataset.running === 'true';
@@ -1925,50 +2169,39 @@ class QuotesViewProvider {
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
         }
-      } else if (action === 'moveQuoteColumn') {
-        const column = button.dataset.column || '';
-        const direction = button.dataset.direction === 'up' ? -1 : 1;
-        updateQuoteColumns(moveQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, column, direction));
-      } else if (action === 'resetQuoteColumns') {
-        updateQuoteColumns(['name', 'price', 'changePercent']);
-      } else if (action === 'openNativeSettings') {
-        vscode.postMessage({ command: 'settings' });
       }
     });
-    configPanel.addEventListener('click', (event) => {
+    aiPanel.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) {
         return;
       }
       const action = button.dataset.action;
-      if (action === 'moveQuoteColumn') {
-        const column = button.dataset.column || '';
-        const direction = button.dataset.direction === 'up' ? -1 : 1;
-        updateQuoteColumns(moveQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, column, direction));
-      } else if (action === 'resetQuoteColumns') {
-        updateQuoteColumns(['name', 'price', 'changePercent']);
-      } else if (action === 'resetGroupSummaryMetrics') {
-        updateGroupSummaryMetrics([]);
+      if (action === 'runAiPrompt') {
+        runAiPrompt();
       } else if (action === 'openNativeSettings') {
         vscode.postMessage({ command: 'settings' });
       }
     });
-    configPanel.addEventListener('change', (event) => {
-      const select = event.target.closest('select[data-setting="language"]');
-      if (select) {
-        updateLanguage(select.value);
+    aiPanel.addEventListener('input', (event) => {
+      const input = event.target.closest('textarea[data-ai-prompt]');
+      if (!input) {
         return;
       }
-      const input = event.target.closest('input[data-column]');
-      if (input) {
-        updateQuoteColumns(toggleQuoteColumn(latestSnapshot && latestSnapshot.quoteColumns, input.dataset.column, input.checked));
+      aiPrompt = input.value;
+      const runButton = aiPanel.querySelector('button[data-action="runAiPrompt"]');
+      if (runButton && latestSnapshot && latestSnapshot.ai) {
+        runButton.disabled = !latestSnapshot.ai.configured || aiLoading || !aiPrompt.trim();
+      }
+      persistViewState();
+    });
+    aiPanel.addEventListener('keydown', (event) => {
+      const input = event.target.closest('textarea[data-ai-prompt]');
+      if (!input || event.key !== 'Enter' || !event.ctrlKey) {
         return;
       }
-
-      const metricInput = event.target.closest('input[data-summary-metric]');
-      if (metricInput) {
-        updateGroupSummaryMetrics(toggleGroupSummaryMetric(latestSnapshot && latestSnapshot.groupSummaryMetrics, metricInput.dataset.summaryMetric, metricInput.checked));
-      }
+      event.preventDefault();
+      runAiPrompt();
     });
     app.addEventListener('pointerdown', (event) => {
       const handle = event.target.closest('.column-resizer');
@@ -2110,6 +2343,18 @@ class QuotesViewProvider {
         symbolSearchResults = Array.isArray(event.data.results) ? event.data.results : [];
         symbolSearchError = event.data.error || '';
         renderActiveSymbolResults();
+      } else if (event.data && event.data.type === 'openAiAssistant') {
+        aiOpen = true;
+        persistViewState();
+        renderAiPanel(latestSnapshot);
+        focusAiInput();
+      } else if (event.data && event.data.type === 'aiResult') {
+        if (event.data.requestId !== activeAiRequestId) {
+          return;
+        }
+        aiLoading = false;
+        aiResult = event.data.result || {};
+        renderAiPanel(latestSnapshot);
       }
     });
 
@@ -2170,10 +2415,6 @@ class QuotesViewProvider {
       return dict[key] || i18n['zh-CN'][key] || key;
     }
 
-    function getLanguageLabel(language) {
-      return languageLabels[language] || language;
-    }
-
     function applyColumnWidths() {
       for (const row of app.querySelectorAll('.quote[data-columns]')) {
         const columns = row.dataset.columns.split(',');
@@ -2206,6 +2447,11 @@ class QuotesViewProvider {
       locale = snapshot.locale || 'zh-CN';
       document.documentElement.lang = locale;
       updateStaticLabels();
+      aiAssistant.hidden = !snapshot.ai || !snapshot.ai.enabled;
+      if (aiAssistant.hidden && aiOpen) {
+        aiOpen = false;
+        persistViewState();
+      }
       const rowHighlightUp = snapshot.colors.mode === 'none' ? '#d73a49' : snapshot.colors.up;
       const rowHighlightDown = snapshot.colors.mode === 'none' ? '#16a34a' : snapshot.colors.down;
       dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
@@ -2213,7 +2459,7 @@ class QuotesViewProvider {
       toggle.textContent = snapshot.running ? '⏸' : '▶';
       toggle.title = snapshot.running ? t('pause') : t('start');
       toggle.setAttribute('aria-label', toggle.title);
-      renderConfigPanel(snapshot);
+      renderAiPanel(snapshot);
 
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
@@ -2274,8 +2520,8 @@ class QuotesViewProvider {
       importCsv.setAttribute('aria-label', t('importCsv'));
       exportCsv.title = t('exportCsv');
       exportCsv.setAttribute('aria-label', t('exportCsv'));
-      settings.title = t('settings');
-      settings.setAttribute('aria-label', t('settings'));
+      aiAssistant.title = t('aiAssistant');
+      aiAssistant.setAttribute('aria-label', t('aiAssistant'));
       groupName.placeholder = t('addGroup');
       const addGroupButton = groupForm.querySelector('button[type="submit"]');
       if (addGroupButton) {
@@ -2302,123 +2548,76 @@ class QuotesViewProvider {
       return translated ? translated[locale] || translated['zh-CN'] : value;
     }
 
-    function renderConfigPanel(snapshot) {
-      configPanel.hidden = !settingsOpen;
-      if (!settingsOpen) {
-        configPanel.innerHTML = '';
+    function renderAiPanel(snapshot) {
+      const ai = snapshot && snapshot.ai ? snapshot.ai : { enabled: false, configured: false };
+      aiPanel.hidden = !aiOpen || !ai.enabled;
+      if (!aiOpen) {
+        aiPanel.innerHTML = '';
+        return;
+      }
+      if (!ai.enabled) {
+        aiPanel.innerHTML = '';
         return;
       }
 
-      const columns = normalizeQuoteColumns(snapshot && snapshot.quoteColumns);
-      const orderedColumns = getConfigPanelColumns(columns);
-      const groupSummaryMetrics = normalizeGroupSummaryMetrics(snapshot && snapshot.groupSummaryMetrics);
-      const selectedLanguage = snapshot && snapshot.language ? snapshot.language : 'auto';
-      configPanel.innerHTML = '<div class="config-panel-title">' +
-          '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
-          '<button class="secondary icon-button" data-action="openNativeSettings" title="' + escapeHtml(t('openNativeSettings')) + '" aria-label="' + escapeHtml(t('openNativeSettings')) + '">⚙</button>' +
+      const canRun = Boolean(ai.configured) && !aiLoading && aiPrompt.trim();
+      aiPanel.innerHTML = '<div class="ai-panel-header">' +
+          '<span class="ai-panel-title">' + escapeHtml(t('aiAssistant')) + '</span>' +
         '</div>' +
-        '<label class="config-select-row">' +
-          '<span>' + escapeHtml(t('language')) + '</span>' +
-          '<select data-setting="language">' +
-            ['auto', 'zh-CN', 'en-US'].map((language) => '<option value="' + language + '"' + (language === selectedLanguage ? ' selected' : '') + '>' + escapeHtml(getLanguageLabel(language)) + '</option>').join('') +
-          '</select>' +
-        '</label>' +
-        '<div class="config-panel-title">' +
-          '<span>' + escapeHtml(t('groupSummary')) + '</span>' +
+        '<textarea class="ai-input" data-ai-prompt placeholder="' + escapeHtml(t('aiPromptPlaceholder')) + '">' + escapeHtml(aiPrompt) + '</textarea>' +
+        '<div class="ai-actions">' +
+          '<span class="meta">' + escapeHtml(ai.configured ? t('aiReady') : t('aiNotConfigured')) + '</span>' +
+          '<button class="secondary" data-action="openNativeSettings">' + escapeHtml(t('aiOpenSettings')) + '</button>' +
+          '<button data-action="runAiPrompt" ' + (canRun ? '' : 'disabled') + '>' + escapeHtml(aiLoading ? t('aiRunning') : t('aiRun')) + '</button>' +
         '</div>' +
-        '<div class="summary-config-list">' +
-          availableGroupSummaryMetrics.map((metric) => renderGroupSummaryMetricItem(metric, groupSummaryMetrics)).join('') +
-        '</div>' +
-        '<div class="config-panel-title">' +
-          '<span>' + escapeHtml(t('tableColumns')) + '</span>' +
-        '</div>' +
-        '<div class="column-config-list">' +
-          orderedColumns.map((column) => renderColumnConfigItem(column, columns)).join('') +
-        '</div>' +
-        '<div class="config-actions">' +
-          '<button class="secondary icon-button" data-action="resetQuoteColumns" title="' + escapeHtml(t('resetColumns')) + '" aria-label="' + escapeHtml(t('resetColumns')) + '">↺</button>' +
-        '</div>';
+        renderAiResult();
     }
 
-    function getConfigPanelColumns(columns) {
-      const visible = normalizeQuoteColumns(columns);
-      const hidden = availableQuoteColumns.filter((column) => !visible.includes(column));
-      return [...visible, ...hidden];
-    }
-
-    function renderColumnConfigItem(column, columns) {
-      const visible = columns.includes(column);
-      const visibleIndex = columns.indexOf(column);
-      const canMoveUp = visible && visibleIndex > 0;
-      const canMoveDown = visible && visibleIndex >= 0 && visibleIndex < columns.length - 1;
-      const canHide = !visible || columns.length > 1;
-      return '<div class="column-config-item">' +
-        '<input type="checkbox" data-column="' + escapeHtml(column) + '" title="' + escapeHtml(t('showColumn') + ' ' + getColumnLabel(column)) + '" aria-label="' + escapeHtml(t('showColumn') + ' ' + getColumnLabel(column)) + '" ' + (visible ? 'checked ' : '') + (canHide ? '' : 'disabled') + '>' +
-        '<label>' + escapeHtml(getColumnLabel(column)) + '</label>' +
-        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="up" title="' + escapeHtml(t('moveUp')) + '" aria-label="' + escapeHtml(t('moveUp')) + '" ' + (canMoveUp ? '' : 'disabled') + '>↑</button>' +
-        '<button class="secondary icon-button" data-action="moveQuoteColumn" data-column="' + escapeHtml(column) + '" data-direction="down" title="' + escapeHtml(t('moveDown')) + '" aria-label="' + escapeHtml(t('moveDown')) + '" ' + (canMoveDown ? '' : 'disabled') + '>↓</button>' +
+    function renderAiResult() {
+      if (!aiResult) {
+        return '';
+      }
+      const changes = Array.isArray(aiResult.changes) ? aiResult.changes : [];
+      const warnings = Array.isArray(aiResult.warnings) ? aiResult.warnings : [];
+      return '<div class="ai-result' + (aiResult.ok === false ? ' error' : '') + '">' +
+        '<div>' + escapeHtml(aiResult.message || '') + '</div>' +
+        renderAiResultList(t('aiChanges'), changes) +
+        renderAiResultList(t('aiWarnings'), warnings) +
       '</div>';
     }
 
-    function renderGroupSummaryMetricItem(metric, metrics) {
-      const visible = metrics.includes(metric);
-      return '<div class="summary-config-item">' +
-        '<input type="checkbox" data-summary-metric="' + escapeHtml(metric) + '" title="' + escapeHtml(t('showMetric') + ' ' + getGroupSummaryMetricLabel(metric)) + '" aria-label="' + escapeHtml(t('showMetric') + ' ' + getGroupSummaryMetricLabel(metric)) + '" ' + (visible ? 'checked ' : '') + '>' +
-        '<label>' + escapeHtml(getGroupSummaryMetricLabel(metric)) + '</label>' +
-      '</div>';
+    function renderAiResultList(label, items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        return '';
+      }
+      return '<div>' + escapeHtml(label) + '</div><ul class="ai-result-list">' +
+        items.map((item) => '<li>' + escapeHtml(item) + '</li>').join('') +
+      '</ul>';
     }
 
-    function updateQuoteColumns(columns) {
-      const normalized = normalizeQuoteColumns(columns);
-      vscode.postMessage({
-        command: 'updateQuoteColumns',
-        columns: normalized
-      });
-      if (latestSnapshot) {
-        latestSnapshot = {
-          ...latestSnapshot,
-          quoteColumns: normalized
-        };
-        renderConfigPanel(latestSnapshot);
-        if (!shouldFreezeQuoteRender()) {
-          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
-          applyColumnWidths();
+    function focusAiInput() {
+      window.setTimeout(() => {
+        const input = aiPanel.querySelector('textarea[data-ai-prompt]');
+        if (input) {
+          input.focus();
         }
-      }
+      }, 0);
     }
 
-    function updateGroupSummaryMetrics(metrics) {
-      const normalized = normalizeGroupSummaryMetrics(metrics);
-      vscode.postMessage({
-        command: 'updateGroupSummaryMetrics',
-        metrics: normalized
-      });
-      if (latestSnapshot) {
-        latestSnapshot = {
-          ...latestSnapshot,
-          groupSummaryMetrics: normalized
-        };
-        renderConfigPanel(latestSnapshot);
-        if (!shouldFreezeQuoteRender()) {
-          app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
-          applyColumnWidths();
-        }
+    function runAiPrompt() {
+      const prompt = aiPrompt.trim();
+      if (!prompt || aiLoading) {
+        return;
       }
-    }
-
-    function updateLanguage(language) {
+      aiLoading = true;
+      aiResult = undefined;
+      activeAiRequestId = ++aiRequestId;
+      renderAiPanel(latestSnapshot);
       vscode.postMessage({
-        command: 'updateLanguage',
-        language
+        command: 'aiManage',
+        requestId: activeAiRequestId,
+        prompt
       });
-      if (latestSnapshot) {
-        latestSnapshot = {
-          ...latestSnapshot,
-          language,
-          locale: language === 'auto' ? latestSnapshot.locale : language
-        };
-        render(latestSnapshot);
-      }
     }
 
     function updateLocalSymbolField(index, field, value) {
@@ -2482,37 +2681,6 @@ class QuotesViewProvider {
         return null;
       }
       return field === 'holding' ? Math.trunc(parsed) : parsed;
-    }
-
-    function toggleQuoteColumn(currentColumns, column, checked) {
-      const columns = normalizeQuoteColumns(currentColumns);
-      if (checked) {
-        return columns.includes(column) ? columns : [...columns, column];
-      }
-      if (columns.length <= 1) {
-        return columns;
-      }
-      return columns.filter((item) => item !== column);
-    }
-
-    function moveQuoteColumn(currentColumns, column, direction) {
-      const columns = normalizeQuoteColumns(currentColumns);
-      const index = columns.indexOf(column);
-      const nextIndex = index + direction;
-      if (index < 0 || nextIndex < 0 || nextIndex >= columns.length) {
-        return columns;
-      }
-      const nextColumns = [...columns];
-      [nextColumns[index], nextColumns[nextIndex]] = [nextColumns[nextIndex], nextColumns[index]];
-      return nextColumns;
-    }
-
-    function toggleGroupSummaryMetric(currentMetrics, metric, checked) {
-      const metrics = normalizeGroupSummaryMetrics(currentMetrics);
-      if (checked) {
-        return metrics.includes(metric) ? metrics : [...metrics, metric];
-      }
-      return metrics.filter((item) => item !== metric);
     }
 
     function normalizeQuoteColumns(columns) {
@@ -3071,7 +3239,8 @@ class QuotesViewProvider {
         editingGroups,
         collapsedGroups,
         addingGroups,
-        settingsOpen,
+        aiOpen,
+        aiPrompt,
         tableSort,
         columnWidths,
         lastFlashedUpdatedAt
@@ -3143,11 +3312,13 @@ function readConfig() {
     .map(normalizeAlertRule)
     .filter(Boolean);
   const language = sanitizeLanguage(config.get('language', DEFAULT_LANGUAGE));
+  const ai = readAiConfig(config);
 
   return {
     groups,
     symbols,
     alerts,
+    ai,
     language,
     locale: resolveLanguage(language),
     enableAlerts: config.get('enableAlerts', true),
@@ -3168,6 +3339,64 @@ function readConfig() {
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
+}
+
+function readAiConfig(config) {
+  const enabled = Boolean(config.get('ai.enabled', false));
+  const provider = sanitizeAiProvider(config.get('ai.provider', 'disabled'));
+  const model = String(config.get('ai.model', '') || DEFAULT_AI_MODELS[provider] || '').trim();
+  const baseUrl = normalizeBaseUrl(config.get('ai.baseUrl', '') || DEFAULT_AI_BASE_URLS[provider] || '');
+  const apiKey = String(config.get('ai.apiKey', '') || '').trim();
+  const azureApiVersion = String(config.get('ai.azureApiVersion', '2024-06-01') || '2024-06-01').trim();
+  const temperature = clampNumber(config.get('ai.temperature', 0.1), 0, 1, 0.1);
+  const timeoutMs = Math.round(clampNumber(config.get('ai.timeoutMs', 30000), 5000, 120000, 30000));
+
+  return {
+    enabled,
+    provider,
+    model,
+    baseUrl,
+    apiKey,
+    azureApiVersion,
+    temperature,
+    timeoutMs
+  };
+}
+
+function sanitizeAiProvider(value) {
+  return AI_PROVIDERS.includes(value) ? value : 'disabled';
+}
+
+function createPublicAiConfig(ai) {
+  return {
+    enabled: Boolean(ai && ai.enabled),
+    configured: Boolean(ai && ai.enabled && isAiConfigured(ai))
+  };
+}
+
+function isAiConfigured(ai) {
+  if (!ai || !ai.provider || ai.provider === 'disabled') {
+    return false;
+  }
+  if (!ai.model) {
+    return false;
+  }
+  if ((ai.provider === 'azureOpenAI' || ai.provider === 'customOpenAICompatible') && !ai.baseUrl) {
+    return false;
+  }
+  return ['ollama', 'lmStudio'].includes(ai.provider) || Boolean(ai.apiKey);
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
 }
 
 function normalizeGroups(value, symbols = []) {
@@ -3246,6 +3475,570 @@ function normalizeSymbolConfig(item) {
     cost: optionalNumber(item.cost),
     holding: optionalNumber(item.holding)
   };
+}
+
+async function createAiManagementPlan(prompt, config, output) {
+  const startedAt = Date.now();
+  appendLog(output, 'INFO', 'AI plan creation started', {
+    provider: config.ai.provider,
+    model: config.ai.model,
+    baseUrl: sanitizeUrlForLog(config.ai.baseUrl),
+    temperature: config.ai.temperature,
+    timeoutMs: config.ai.timeoutMs,
+    promptLength: prompt.length,
+    promptPreview: truncateForLog(prompt, 500),
+    groups: config.groups.length,
+    symbols: config.symbols.length
+  });
+  const systemPrompt = [
+    '你是 Market Monitoring VS Code 扩展的分组和标的管理助手。',
+    '你必须只返回 JSON，不要 Markdown，不要解释。',
+    '根据用户自然语言，把需求转换为 actions 数组。',
+    '可用 action.type：addGroup, renameGroup, removeGroup, addSymbol, removeSymbol, moveSymbol, renameSymbol, updateSymbol。',
+    '字段约定：group/name/newName/oldName/code/cost/holding/moveSymbolsTo。',
+    'addSymbol 可以只给 name，扩展会搜索匹配标的；如果用户给了股票代码，必须放到 code。',
+    'removeGroup 默认把组内标的移动到 moveSymbolsTo；没有指定时可以省略。',
+    '不要编造不存在于当前列表中的旧标的代码；不确定时优先用 name。',
+    '返回格式：{"actions":[...],"note":"简短说明"}'
+  ].join('\n');
+  const userPrompt = JSON.stringify({
+    instruction: prompt,
+    currentGroups: config.groups,
+    currentSymbols: config.symbols.map((symbol) => ({
+      code: symbol.code,
+      name: symbol.name,
+      group: symbol.group,
+      cost: symbol.cost,
+      holding: symbol.holding
+    }))
+  });
+  const content = await requestAiCompletion(config.ai, [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ], output);
+  appendLog(output, 'INFO', 'AI plan response received', {
+    elapsedMs: Date.now() - startedAt,
+    contentLength: content.length,
+    contentPreview: truncateForLog(content)
+  });
+  let parsed;
+  try {
+    parsed = parseAiJson(content);
+  } catch (error) {
+    appendLog(output, 'ERROR', 'AI plan JSON parse failed', {
+      error: getErrorMessage(error),
+      contentLength: content.length,
+      contentPreview: truncateForLog(content)
+    });
+    throw error;
+  }
+  const actions = Array.isArray(parsed.actions)
+    ? parsed.actions
+    : Array.isArray(parsed.operations)
+      ? parsed.operations
+      : [];
+  appendLog(output, 'INFO', 'AI plan parsed', {
+    actions: actions.length,
+    note: truncateForLog(String(parsed.note || parsed.summary || ''), 500),
+    actionTypes: actions.map((action) => action && action.type).filter(Boolean)
+  });
+  return {
+    note: String(parsed.note || parsed.summary || '').trim(),
+    actions
+  };
+}
+
+async function applyAiManagementPlan(plan, config, output) {
+  appendLog(output, 'INFO', 'AI plan application started', {
+    requestedActions: Array.isArray(plan.actions) ? plan.actions.length : 0,
+    currentGroups: config.groups.length,
+    currentSymbols: config.symbols.length
+  });
+  const changes = [];
+  const warnings = [];
+  let nextGroups = [...config.groups];
+  let nextSymbols = config.symbols.map((symbol) => ({ ...symbol }));
+
+  const ensureGroup = (name) => {
+    const group = normalizeGroupName(name) || DEFAULT_GROUP;
+    if (!nextGroups.includes(group)) {
+      nextGroups.push(group);
+      changes.push(`新增分组：${group}`);
+    }
+    return group;
+  };
+
+  const actions = Array.isArray(plan.actions) ? plan.actions : [];
+  for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
+    const rawAction = actions[actionIndex];
+    const action = normalizeAiAction(rawAction);
+    appendLog(output, 'INFO', 'AI action received', {
+      index: actionIndex,
+      rawAction: sanitizeAiActionForLog(rawAction),
+      normalizedType: action ? action.type : ''
+    });
+    if (!action) {
+      warnings.push('跳过无法识别的 AI 操作。');
+      appendLog(output, 'WARN', 'AI action skipped', {
+        index: actionIndex,
+        reason: 'unknownAction',
+        rawAction: sanitizeAiActionForLog(rawAction)
+      });
+      continue;
+    }
+
+    if (action.type === 'addGroup') {
+      const group = ensureGroup(action.name || action.group);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, group });
+      continue;
+    }
+
+    if (action.type === 'renameGroup') {
+      const oldName = normalizeGroupName(action.oldName || action.name || action.group);
+      const newName = normalizeGroupName(action.newName || action.to || action.targetGroup);
+      if (!oldName || !newName) {
+        warnings.push('跳过分组重命名：缺少旧名称或新名称。');
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'missingGroupName', action: sanitizeAiActionForLog(action) });
+        continue;
+      }
+      if (!nextGroups.includes(oldName)) {
+        warnings.push(`分组不存在，无法重命名：${oldName}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'groupNotFound', oldName });
+        continue;
+      }
+      nextGroups = nextGroups
+        .map((group) => group === oldName ? newName : group)
+        .filter((group, index, groups) => groups.indexOf(group) === index);
+      nextSymbols = nextSymbols.map((symbol) => symbol.group === oldName ? { ...symbol, group: newName } : symbol);
+      changes.push(`重命名分组：${oldName} -> ${newName}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, oldName, newName });
+      continue;
+    }
+
+    if (action.type === 'removeGroup') {
+      const groupName = normalizeGroupName(action.name || action.group);
+      if (!groupName || !nextGroups.includes(groupName)) {
+        warnings.push(`分组不存在，无法删除：${groupName || '(空)'}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'groupNotFound', groupName });
+        continue;
+      }
+      const fallbackGroup = ensureGroup(action.moveSymbolsTo || DEFAULT_GROUP);
+      nextGroups = nextGroups.filter((group) => group !== groupName);
+      nextSymbols = nextSymbols.map((symbol) => symbol.group === groupName ? { ...symbol, group: fallbackGroup } : symbol);
+      changes.push(`删除分组：${groupName}，组内标的移动到 ${fallbackGroup}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, groupName, fallbackGroup });
+      continue;
+    }
+
+    if (action.type === 'addSymbol') {
+      const symbol = await resolveAiSymbol(action, config, warnings, output);
+      if (!symbol) {
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolResolveFailed', action: sanitizeAiActionForLog(action) });
+        continue;
+      }
+      if (isBuiltInIndexCode(symbol.code)) {
+        warnings.push(`${symbol.name} 是内置指数，未加入自选标的。`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'builtInIndex', symbol });
+        continue;
+      }
+      if (nextSymbols.some((item) => item.code === symbol.code)) {
+        warnings.push(`标的已存在，跳过：${symbol.name} (${symbol.code})`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolExists', symbol });
+        continue;
+      }
+      const group = ensureGroup(symbol.group || action.group || DEFAULT_GROUP);
+      const insertIndex = findGroupInsertIndex(nextSymbols, group);
+      nextSymbols.splice(insertIndex, 0, { ...symbol, group });
+      changes.push(`新增标的：${symbol.name} (${symbol.code}) -> ${group}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol, insertIndex });
+      continue;
+    }
+
+    const symbolIndex = findAiSymbolIndex(nextSymbols, action);
+    if (symbolIndex < 0) {
+      warnings.push(`未找到标的，跳过：${action.name || action.code || '(未指定)'}`);
+      appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolNotFound', action: sanitizeAiActionForLog(action) });
+      continue;
+    }
+
+    const currentSymbol = nextSymbols[symbolIndex];
+    if (action.type === 'removeSymbol') {
+      nextSymbols.splice(symbolIndex, 1);
+      changes.push(`删除标的：${currentSymbol.name} (${currentSymbol.code})`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol: currentSymbol });
+      continue;
+    }
+
+    if (action.type === 'moveSymbol') {
+      const group = ensureGroup(action.group || action.newGroup || action.targetGroup);
+      nextSymbols[symbolIndex] = { ...currentSymbol, group };
+      changes.push(`移动标的：${currentSymbol.name} (${currentSymbol.code}) -> ${group}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol: currentSymbol, group });
+      continue;
+    }
+
+    if (action.type === 'renameSymbol') {
+      const nextName = String(action.newName || action.alias || '').trim();
+      if (!nextName) {
+        warnings.push(`跳过标的重命名：${currentSymbol.name} 缺少新名称。`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'missingNewName', symbol: currentSymbol });
+        continue;
+      }
+      nextSymbols[symbolIndex] = { ...currentSymbol, name: nextName };
+      changes.push(`重命名标的：${currentSymbol.name} -> ${nextName}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, oldName: currentSymbol.name, newName: nextName, code: currentSymbol.code });
+      continue;
+    }
+
+    if (action.type === 'updateSymbol') {
+      const patch = {};
+      if (action.name) {
+        patch.name = String(action.name).trim();
+      }
+      if (action.group || action.newGroup || action.targetGroup) {
+        patch.group = ensureGroup(action.group || action.newGroup || action.targetGroup);
+      }
+      if (action.cost !== undefined) {
+        patch.cost = optionalNumber(action.cost);
+      }
+      if (action.holding !== undefined) {
+        patch.holding = optionalNumber(action.holding);
+      }
+      nextSymbols[symbolIndex] = { ...currentSymbol, ...patch };
+      changes.push(`更新标的：${currentSymbol.name} (${currentSymbol.code})`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol: currentSymbol, patch });
+    }
+  }
+
+  nextGroups = normalizeGroups(nextGroups, nextSymbols);
+  const changed = changes.length > 0;
+  appendLog(output, 'INFO', 'AI plan applied', {
+    changed,
+    changes,
+    warnings,
+    nextGroups: nextGroups.length,
+    nextSymbols: nextSymbols.length
+  });
+  return {
+    changed,
+    groups: nextGroups,
+    symbols: nextSymbols,
+    changes,
+    warnings,
+    summary: changed
+      ? `AI 已执行 ${changes.length} 项修改${warnings.length > 0 ? `，${warnings.length} 项提醒` : ''}`
+      : `AI 未产生配置修改${warnings.length > 0 ? `，${warnings.length} 项提醒` : ''}`
+  };
+}
+
+function normalizeAiAction(action) {
+  if (!action || typeof action !== 'object') {
+    return undefined;
+  }
+  const aliases = {
+    add_group: 'addGroup',
+    rename_group: 'renameGroup',
+    remove_group: 'removeGroup',
+    deleteGroup: 'removeGroup',
+    delete_group: 'removeGroup',
+    add_symbol: 'addSymbol',
+    remove_symbol: 'removeSymbol',
+    deleteSymbol: 'removeSymbol',
+    delete_symbol: 'removeSymbol',
+    move_symbol: 'moveSymbol',
+    rename_symbol: 'renameSymbol',
+    update_symbol: 'updateSymbol'
+  };
+  const type = aliases[action.type] || action.type;
+  const allowed = new Set(['addGroup', 'renameGroup', 'removeGroup', 'addSymbol', 'removeSymbol', 'moveSymbol', 'renameSymbol', 'updateSymbol']);
+  return allowed.has(type) ? { ...action, type } : undefined;
+}
+
+async function resolveAiSymbol(action, config, warnings, output) {
+  const code = normalizeCode(String(action.code || ''));
+  const group = normalizeGroupName(action.group || action.targetGroup || action.newGroup) || DEFAULT_GROUP;
+  if (code) {
+    appendLog(output, 'INFO', 'AI symbol resolved by code', { code, group });
+    const name = String(action.name || '').trim() || await findSymbolNameByCode(code, config.requestTimeoutMs) || code;
+    return {
+      code,
+      name,
+      group,
+      cost: optionalNumber(action.cost),
+      holding: optionalNumber(action.holding)
+    };
+  }
+
+  const name = String(action.name || action.keyword || '').trim();
+  if (!name) {
+    warnings.push('跳过新增标的：缺少名称或代码。');
+    appendLog(output, 'WARN', 'AI symbol resolve skipped', { reason: 'missingNameAndCode', action: sanitizeAiActionForLog(action) });
+    return undefined;
+  }
+
+  const startedAt = Date.now();
+  appendLog(output, 'INFO', 'AI symbol search started', { keyword: name, timeoutMs: config.requestTimeoutMs });
+  const results = await fetchSymbolSearchResults(name, config.requestTimeoutMs).catch((error) => {
+    warnings.push(`搜索标的失败：${name}，${getErrorMessage(error)}`);
+    appendLog(output, 'WARN', 'AI symbol search failed', {
+      keyword: name,
+      elapsedMs: Date.now() - startedAt,
+      error: getErrorMessage(error)
+    });
+    return [];
+  });
+  appendLog(output, 'INFO', 'AI symbol search returned', {
+    keyword: name,
+    elapsedMs: Date.now() - startedAt,
+    results: results.length,
+    topResults: results.slice(0, 5).map((item) => ({ code: item.code, name: item.name, market: item.market }))
+  });
+  const matched = results[0];
+  if (!matched) {
+    warnings.push(`没有找到可添加的标的：${name}`);
+    return undefined;
+  }
+
+  return {
+    code: matched.code,
+    name: String(action.displayName || action.name || matched.name || matched.code).trim(),
+    group,
+    cost: optionalNumber(action.cost),
+    holding: optionalNumber(action.holding)
+  };
+}
+
+function findAiSymbolIndex(symbols, action) {
+  const code = normalizeCode(String(action.code || ''));
+  if (code) {
+    return symbols.findIndex((symbol) => symbol.code === code);
+  }
+
+  const name = String(action.name || action.oldName || action.keyword || '').trim();
+  if (!name) {
+    return -1;
+  }
+  const exactIndex = symbols.findIndex((symbol) => symbol.name === name);
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+  const lowerName = name.toLowerCase();
+  return symbols.findIndex((symbol) => symbol.name.toLowerCase().includes(lowerName) || symbol.code.toLowerCase() === lowerName);
+}
+
+async function requestAiCompletion(ai, messages, output) {
+  appendLog(output, 'INFO', 'AI completion dispatch', {
+    provider: ai.provider,
+    model: ai.model,
+    baseUrl: sanitizeUrlForLog(ai.baseUrl),
+    messageCount: messages.length,
+    messageSizes: messages.map((message) => ({ role: message.role, length: String(message.content || '').length }))
+  });
+  if (OPENAI_COMPATIBLE_AI_PROVIDERS.includes(ai.provider)) {
+    return requestOpenAiCompatibleCompletion(ai, messages, output);
+  }
+  if (ai.provider === 'azureOpenAI') {
+    return requestAzureOpenAiCompletion(ai, messages, output);
+  }
+  if (ai.provider === 'anthropic') {
+    return requestAnthropicCompletion(ai, messages, output);
+  }
+  if (ai.provider === 'gemini') {
+    return requestGeminiCompletion(ai, messages, output);
+  }
+  throw new Error(`不支持的 AI Provider：${ai.provider}`);
+}
+
+async function requestOpenAiCompatibleCompletion(ai, messages, output) {
+  const baseUrl = ai.baseUrl || DEFAULT_AI_BASE_URLS[ai.provider];
+  const url = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'VSCode Market Monitoring'
+  };
+  if (ai.apiKey) {
+    headers.Authorization = `Bearer ${ai.apiKey}`;
+  }
+  if (ai.provider === 'openrouter') {
+    headers['X-Title'] = 'Market Monitoring';
+  }
+  const response = await requestJson(url, {
+    method: 'POST',
+    headers,
+    body: {
+      model: ai.model,
+      messages,
+      temperature: ai.temperature
+    },
+    timeoutMs: ai.timeoutMs,
+    errorPrefix: 'AI 接口',
+    output,
+    logContext: {
+      provider: ai.provider,
+      model: ai.model,
+      endpointType: 'openaiCompatibleChatCompletions'
+    }
+  });
+  const content = response && response.choices && response.choices[0] && response.choices[0].message
+    ? String(response.choices[0].message.content || '')
+    : '';
+  appendLog(output, 'INFO', 'AI completion extracted', {
+    provider: ai.provider,
+    model: ai.model,
+    contentLength: content.length,
+    choices: Array.isArray(response.choices) ? response.choices.length : 0,
+    finishReason: response && response.choices && response.choices[0] ? response.choices[0].finish_reason : '',
+    usage: response ? response.usage : undefined
+  });
+  return content;
+}
+
+async function requestAzureOpenAiCompletion(ai, messages, output) {
+  const baseUrl = ai.baseUrl || '';
+  if (!baseUrl) {
+    throw new Error('Azure OpenAI 需要配置 marketMonitoring.ai.baseUrl');
+  }
+  const url = `${baseUrl}/openai/deployments/${encodeURIComponent(ai.model)}/chat/completions?api-version=${encodeURIComponent(ai.azureApiVersion)}`;
+  const response = await requestJson(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': ai.apiKey,
+      'User-Agent': 'VSCode Market Monitoring'
+    },
+    body: {
+      messages,
+      temperature: ai.temperature
+    },
+    timeoutMs: ai.timeoutMs,
+    errorPrefix: 'Azure OpenAI 接口',
+    output,
+    logContext: {
+      provider: ai.provider,
+      model: ai.model,
+      endpointType: 'azureChatCompletions'
+    }
+  });
+  const content = response && response.choices && response.choices[0] && response.choices[0].message
+    ? String(response.choices[0].message.content || '')
+    : '';
+  appendLog(output, 'INFO', 'AI completion extracted', {
+    provider: ai.provider,
+    model: ai.model,
+    contentLength: content.length,
+    choices: Array.isArray(response.choices) ? response.choices.length : 0,
+    finishReason: response && response.choices && response.choices[0] ? response.choices[0].finish_reason : '',
+    usage: response ? response.usage : undefined
+  });
+  return content;
+}
+
+async function requestAnthropicCompletion(ai, messages, output) {
+  const systemMessage = messages.find((message) => message.role === 'system');
+  const userMessages = messages
+    .filter((message) => message.role !== 'system')
+    .map((message) => ({
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: String(message.content || '')
+    }));
+  const response = await requestJson(`${ai.baseUrl || DEFAULT_AI_BASE_URLS.anthropic}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ai.apiKey,
+      'anthropic-version': '2023-06-01',
+      'User-Agent': 'VSCode Market Monitoring'
+    },
+    body: {
+      model: ai.model,
+      max_tokens: 1200,
+      temperature: ai.temperature,
+      system: systemMessage ? String(systemMessage.content || '') : undefined,
+      messages: userMessages
+    },
+    timeoutMs: ai.timeoutMs,
+    errorPrefix: 'Anthropic 接口',
+    output,
+    logContext: {
+      provider: ai.provider,
+      model: ai.model,
+      endpointType: 'anthropicMessages'
+    }
+  });
+  const content = Array.isArray(response.content)
+    ? response.content.map((item) => item && item.text ? item.text : '').join('')
+    : '';
+  appendLog(output, 'INFO', 'AI completion extracted', {
+    provider: ai.provider,
+    model: ai.model,
+    contentLength: content.length,
+    stopReason: response ? response.stop_reason : '',
+    usage: response ? response.usage : undefined
+  });
+  return content;
+}
+
+async function requestGeminiCompletion(ai, messages, output) {
+  const baseUrl = ai.baseUrl || DEFAULT_AI_BASE_URLS.gemini;
+  const systemMessage = messages.find((message) => message.role === 'system');
+  const userText = messages
+    .filter((message) => message.role !== 'system')
+    .map((message) => String(message.content || ''))
+    .join('\n\n');
+  const url = `${baseUrl}/v1beta/models/${encodeURIComponent(ai.model)}:generateContent?key=${encodeURIComponent(ai.apiKey)}`;
+  const response = await requestJson(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'VSCode Market Monitoring'
+    },
+    body: {
+      systemInstruction: systemMessage ? { parts: [{ text: String(systemMessage.content || '') }] } : undefined,
+      contents: [{ role: 'user', parts: [{ text: userText }] }],
+      generationConfig: {
+        temperature: ai.temperature,
+        responseMimeType: 'application/json'
+      }
+    },
+    timeoutMs: ai.timeoutMs,
+    errorPrefix: 'Gemini 接口',
+    output,
+    logContext: {
+      provider: ai.provider,
+      model: ai.model,
+      endpointType: 'geminiGenerateContent'
+    }
+  });
+  const parts = response && response.candidates && response.candidates[0] && response.candidates[0].content
+    ? response.candidates[0].content.parts
+    : [];
+  const content = Array.isArray(parts) ? parts.map((part) => part.text || '').join('') : '';
+  appendLog(output, 'INFO', 'AI completion extracted', {
+    provider: ai.provider,
+    model: ai.model,
+    contentLength: content.length,
+    candidates: Array.isArray(response.candidates) ? response.candidates.length : 0,
+    finishReason: response && response.candidates && response.candidates[0] ? response.candidates[0].finishReason : '',
+    usage: response ? response.usageMetadata : undefined
+  });
+  return content;
+}
+
+function parseAiJson(content) {
+  const text = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  if (!text) {
+    throw new Error('AI 未返回内容');
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return JSON.parse(text.slice(start, end + 1));
+    }
+    throw error;
+  }
 }
 
 function findGroupInsertIndex(symbols, groupName) {
@@ -3719,6 +4512,92 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
     label: alertLabel,
     message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
   });
+}
+
+function requestJson(url, options) {
+  const requestOptions = options || {};
+  const body = JSON.stringify(removeUndefinedFields(requestOptions.body || {}));
+  const startedAt = Date.now();
+  appendLog(requestOptions.output, 'INFO', 'HTTP JSON request started', {
+    ...requestOptions.logContext,
+    method: requestOptions.method || 'POST',
+    url: sanitizeUrlForLog(url),
+    timeoutMs: requestOptions.timeoutMs || 30000,
+    bodyBytes: Buffer.byteLength(body),
+    bodyPreview: truncateForLog(safeStringify(sanitizeSensitiveObject(requestOptions.body || {})), AI_LOG_TEXT_LIMIT)
+  });
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('http:') ? http : https;
+    const request = client.request(url, {
+      method: requestOptions.method || 'POST',
+      headers: {
+        ...requestOptions.headers,
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => {
+        const text = decodeResponseText(Buffer.concat(chunks), 'utf8');
+        const elapsedMs = Date.now() - startedAt;
+        const responseDetails = {
+          ...requestOptions.logContext,
+          statusCode: response.statusCode,
+          elapsedMs,
+          responseBytes: Buffer.byteLength(text),
+          responsePreview: truncateForLog(text)
+        };
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          appendLog(requestOptions.output, 'WARN', 'HTTP JSON request failed', responseDetails);
+          reject(new Error(`${requestOptions.errorPrefix || '接口'}返回 HTTP ${response.statusCode}: ${text.slice(0, 500)}`));
+          return;
+        }
+        try {
+          const parsed = JSON.parse(text);
+          appendLog(requestOptions.output, 'INFO', 'HTTP JSON request succeeded', responseDetails);
+          resolve(parsed);
+        } catch (error) {
+          appendLog(requestOptions.output, 'ERROR', 'HTTP JSON response parse failed', {
+            ...responseDetails,
+            error: getErrorMessage(error)
+          });
+          reject(new Error(`${requestOptions.errorPrefix || '接口'}返回的内容不是 JSON: ${text.slice(0, 500)}`));
+        }
+      });
+    });
+
+    request.on('error', (error) => {
+      appendLog(requestOptions.output, 'ERROR', 'HTTP JSON request error', {
+        ...requestOptions.logContext,
+        elapsedMs: Date.now() - startedAt,
+        error: getErrorMessage(error)
+      });
+      reject(error);
+    });
+    request.setTimeout(requestOptions.timeoutMs || 30000, () => {
+      appendLog(requestOptions.output, 'ERROR', 'HTTP JSON request timeout', {
+        ...requestOptions.logContext,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs: requestOptions.timeoutMs || 30000,
+        url: sanitizeUrlForLog(url)
+      });
+      request.destroy(new Error(`${requestOptions.errorPrefix || '接口'}请求超时`));
+    });
+    request.write(body);
+    request.end();
+  });
+}
+
+function removeUndefinedFields(value) {
+  if (Array.isArray(value)) {
+    return value.map(removeUndefinedFields);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .map(([key, entryValue]) => [key, removeUndefinedFields(entryValue)]));
 }
 
 function requestText(url, timeoutMs, headers = {}, encoding = 'utf8') {
@@ -4756,6 +5635,80 @@ function getErrorMessage(error) {
     return error.message;
   }
   return String(error);
+}
+
+function appendLog(output, level, message, details) {
+  if (!output) {
+    return;
+  }
+  output.appendLine(formatLogLine(level, message, details));
+}
+
+function sanitizeAiConfigForLog(ai) {
+  const config = ai || {};
+  return {
+    provider: config.provider || '',
+    model: config.model || '',
+    enabled: Boolean(config.enabled),
+    baseUrl: sanitizeUrlForLog(config.baseUrl || ''),
+    azureApiVersion: config.azureApiVersion || '',
+    temperature: config.temperature,
+    timeoutMs: config.timeoutMs,
+    hasApiKey: Boolean(config.apiKey)
+  };
+}
+
+function sanitizeAiActionForLog(action) {
+  return sanitizeSensitiveObject(action || {});
+}
+
+function sanitizeSensitiveObject(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeSensitiveObject);
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string' ? sanitizeTextForLog(value) : value;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => {
+    if (/api[-_]?key|authorization|token|secret|password/i.test(key)) {
+      return [key, entryValue ? '<redacted>' : ''];
+    }
+    return [key, sanitizeSensitiveObject(entryValue)];
+  }));
+}
+
+function sanitizeUrlForLog(value) {
+  const text = String(value || '');
+  if (!text) {
+    return '';
+  }
+  try {
+    const url = new URL(text);
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/key|token|secret|password|code/i.test(key)) {
+        url.searchParams.set(key, '<redacted>');
+      }
+    }
+    return url.toString();
+  } catch (error) {
+    return sanitizeTextForLog(text);
+  }
+}
+
+function sanitizeTextForLog(value) {
+  return String(value || '')
+    .replace(/(api[-_]?key=)[^&\s]+/gi, '$1<redacted>')
+    .replace(/(key=)[^&\s]+/gi, '$1<redacted>')
+    .replace(/(token=)[^&\s]+/gi, '$1<redacted>')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>');
+}
+
+function truncateForLog(value, limit = AI_LOG_TEXT_LIMIT) {
+  const text = sanitizeTextForLog(value);
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit)}...<truncated ${text.length - limit} chars>`;
 }
 
 function formatLogLine(level, message, details) {

@@ -141,7 +141,7 @@
 
 ## 语言切换
 
-`marketMonitoring.language` 控制行情面板显示语言，默认 `auto`，会跟随 VS Code 显示语言。可选值为 `auto`、`zh-CN`、`en-US`。行情面板顶部的设置按钮也提供语言下拉切换。
+`marketMonitoring.language` 控制行情面板显示语言，默认 `auto`，会跟随 VS Code 显示语言。可选值为 `auto`、`zh-CN`、`en-US`。请在 VS Code Settings 或 `settings.json` 中修改。
 
 ## 涨跌颜色
 
@@ -171,7 +171,22 @@
 }
 ```
 
-行情面板顶部的设置按钮可打开列配置面板，支持勾选显示列，并通过上移、下移按钮调整列名展示顺序。
+请在 VS Code Settings 或 `settings.json` 中修改该配置。数组顺序即表格列展示顺序。也可以运行 `Market Monitoring: Configure Quote Columns`，用上移、下移、隐藏和添加操作调整同一个配置项。
+
+例如下面配置会按“名称、代码、价格、涨跌幅、持仓、净收益额”的顺序展示：
+
+```json
+{
+  "marketMonitoring.quoteColumns": [
+    "name",
+    "code",
+    "price",
+    "changePercent",
+    "holding",
+    "netProfit"
+  ]
+}
+```
 
 可选列：
 
