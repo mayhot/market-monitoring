@@ -661,7 +661,7 @@
   },
   "scripts": {
     "check": "node --check src/extension.js",
-    "package": "vsce package"
+    "package": "node scripts/package-release.js"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.2.2"
