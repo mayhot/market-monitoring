@@ -120,7 +120,7 @@
     }
   ],
   "marketMonitoring.enableAlerts": true,
-  "marketMonitoring.enableAlertNotifications": true
+  "marketMonitoring.enableAlertNotifications": false
 }
 ```
 
@@ -128,11 +128,11 @@ When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets a 
 
 预警触发后会：
 
-- 在 VS Code 右下角弹出通知。
+- 默认不在 VS Code 右下角弹出通知；如需弹窗，将 `marketMonitoring.enableAlertNotifications` 设为 `true`。
 - 在行情面板中给对应标的加预警标记。
 - 在状态栏显示预警数量。
 
-同一条预警在条件持续满足时不会重复弹窗；条件解除后再次触发才会重新提醒。
+开启通知后，同一个标的每天最多弹出一次右下角通知；行情面板预警标记和状态栏预警数量仍会实时更新。
 
 ## 排序配置
 

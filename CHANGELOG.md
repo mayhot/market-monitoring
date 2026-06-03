@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.2] - 2026-06-03
+
+### Changed
+
+- Bumped the extension version from `0.2.1` to `0.2.2`.
+- Disabled VS Code alert popup notifications by default while keeping in-panel alert markers and status bar counts active.
+
+### Fixed
+
+- Limited enabled VS Code alert popup notifications to one notification per symbol per Shanghai trading day.
+
 ## [0.2.1] - 2026-06-02
 
 ### Changed

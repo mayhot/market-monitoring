@@ -8,6 +8,7 @@ const vscode = require('vscode');
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
 const QUOTE_CACHE_KEY = 'quoteCache.v1';
+const ALERT_NOTIFICATION_CACHE_KEY = 'alertNotificationCache.v1';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
@@ -267,6 +268,10 @@ class MarketMonitor {
     this.lastQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
+    const alertNotificationCache = readAlertNotificationCache(this.context.globalState);
+    const today = getShanghaiDateString();
+    this.notifiedAlertDate = alertNotificationCache.date === today ? alertNotificationCache.date : today;
+    this.notifiedAlertCodes = new Set(alertNotificationCache.date === today ? alertNotificationCache.codes : []);
     this.dailyKlineCache = new Map();
     this.lastError = '';
     this.lastUpdatedAt = cachedSnapshot.updatedAt;
@@ -736,7 +741,7 @@ class MarketMonitor {
       this.triggeredAlerts = this.config.enableAlerts
         ? await evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, (message, details) => this.logInfo(message, details))
         : [];
-      this.notifyAlerts(this.triggeredAlerts);
+      await this.notifyAlerts(this.triggeredAlerts);
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
       this.logInfo('Refresh succeeded', {
@@ -815,7 +820,7 @@ class MarketMonitor {
     this.statusBarItem.show();
   }
 
-  notifyAlerts(alerts) {
+  async notifyAlerts(alerts) {
     const nextKeys = new Set(alerts.map((alert) => alert.key));
     const freshAlerts = alerts.filter((alert) => !this.activeAlertKeys.has(alert.key));
     this.activeAlertKeys = nextKeys;
@@ -824,13 +829,38 @@ class MarketMonitor {
       return;
     }
 
-    const visibleAlerts = freshAlerts.slice(0, 3);
+    const today = getShanghaiDateString();
+    if (this.notifiedAlertDate !== today) {
+      this.notifiedAlertDate = today;
+      this.notifiedAlertCodes = new Set();
+    }
+
+    const eligibleAlerts = [];
+    const eligibleCodes = new Set();
+    for (const alert of freshAlerts) {
+      if (!alert.code || this.notifiedAlertCodes.has(alert.code) || eligibleCodes.has(alert.code)) {
+        continue;
+      }
+      eligibleAlerts.push(alert);
+      eligibleCodes.add(alert.code);
+    }
+
+    if (eligibleAlerts.length === 0) {
+      return;
+    }
+
+    for (const code of eligibleCodes) {
+      this.notifiedAlertCodes.add(code);
+    }
+    await writeAlertNotificationCache(this.context.globalState, this.notifiedAlertDate, Array.from(this.notifiedAlertCodes));
+
+    const visibleAlerts = eligibleAlerts.slice(0, 3);
     for (const alert of visibleAlerts) {
       vscode.window.showWarningMessage(alert.message);
     }
 
-    if (freshAlerts.length > visibleAlerts.length) {
-      vscode.window.showWarningMessage(`还有 ${freshAlerts.length - visibleAlerts.length} 条行情预警已触发`);
+    if (eligibleAlerts.length > visibleAlerts.length) {
+      vscode.window.showWarningMessage(`还有 ${eligibleAlerts.length - visibleAlerts.length} 条行情预警已触发`);
     }
   }
 
@@ -3344,7 +3374,7 @@ function readConfig() {
     language,
     locale: resolveLanguage(language),
     enableAlerts: config.get('enableAlerts', true),
-    enableAlertNotifications: config.get('enableAlertNotifications', true),
+    enableAlertNotifications: config.get('enableAlertNotifications', false),
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
     showStatusBar: config.get('showStatusBar', false),
@@ -4575,6 +4605,25 @@ async function writeCachedQuoteSnapshot(globalState, quotes, updatedAt, updatedD
       time: quote.time,
       status: quote.status
     }))
+  });
+}
+
+function readAlertNotificationCache(globalState) {
+  const value = globalState.get(ALERT_NOTIFICATION_CACHE_KEY);
+  if (!value || typeof value.date !== 'string' || !Array.isArray(value.codes)) {
+    return { date: '', codes: [] };
+  }
+
+  return {
+    date: value.date,
+    codes: value.codes.filter((code) => typeof code === 'string' && code)
+  };
+}
+
+async function writeAlertNotificationCache(globalState, date, codes) {
+  await globalState.update(ALERT_NOTIFICATION_CACHE_KEY, {
+    date,
+    codes: Array.from(new Set(codes.filter((code) => typeof code === 'string' && code)))
   });
 }
 
