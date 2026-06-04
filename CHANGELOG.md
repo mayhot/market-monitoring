@@ -8,6 +8,15 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.3] - 2026-06-04
+
+### Changed
+
+- Bumped the extension version from `0.2.2` to `0.2.3`.
+- Moved group rise/fall counts next to the group name and tightened group header action buttons.
+- Aligned group rise/fall count colors and quote change colors with the configured Color Mode.
+- Shortened row highlight bars to 61.8% of the quote row height.
+
 ## [0.2.2] - 2026-06-03
 
 ### Changed
