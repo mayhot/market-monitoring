@@ -1012,6 +1012,8 @@ class QuotesViewProvider {
     :root {
       --up: #e51400;
       --down: #16a34a;
+      --group-stat-up: var(--up);
+      --group-stat-down: var(--down);
       --flat: #8b949e;
       --surface: var(--vscode-sideBar-background);
       --surface-soft: var(--vscode-sideBarSectionHeader-background);
@@ -1382,10 +1384,17 @@ class QuotesViewProvider {
 
     .group-title-actions {
       display: flex;
-      gap: 6px;
+      gap: 4px;
       align-items: center;
       flex: 0 1 auto;
       min-width: 0;
+    }
+
+    .group-title-actions .icon-button {
+      min-width: 22px;
+      width: 22px;
+      height: 22px;
+      font-size: 12px;
     }
 
     .group-title-main {
@@ -1405,17 +1414,20 @@ class QuotesViewProvider {
 
     .group-stats {
       display: flex;
-      gap: 6px;
+      gap: 0;
       align-items: center;
-      min-width: 0;
-      overflow: hidden;
-      color: var(--muted);
+      flex: 0 0 auto;
+      color: inherit;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
-    .count {
-      color: var(--muted);
+    .group-stats-up {
+      color: var(--group-stat-up);
+    }
+
+    .group-stats-down {
+      color: var(--group-stat-down);
     }
 
     .quote {
@@ -1675,11 +1687,11 @@ class QuotesViewProvider {
     }
 
     .quote-change.up {
-      color: var(--up);
+      color: var(--group-stat-up);
     }
 
     .quote-change.down {
-      color: var(--down);
+      color: var(--group-stat-down);
     }
 
     .quote-actions {
@@ -1913,6 +1925,8 @@ class QuotesViewProvider {
         saveGroupName: '保存分组名称',
         collapseAdd: '收起添加',
         addSymbol: '添加标的',
+        risingCount: '上升数',
+        fallingCount: '下降数',
         doneEditing: '完成修改',
         editGroup: '修改分组',
         searchPlaceholder: '搜索名称、代码或拼音',
@@ -1979,6 +1993,8 @@ class QuotesViewProvider {
         saveGroupName: 'Save group name',
         collapseAdd: 'Collapse add form',
         addSymbol: 'Add symbol',
+        risingCount: 'Rising',
+        fallingCount: 'Falling',
         doneEditing: 'Done',
         editGroup: 'Edit group',
         searchPlaceholder: 'Search name, code, or pinyin',
@@ -2504,7 +2520,9 @@ class QuotesViewProvider {
       }
       const rowHighlightUp = snapshot.colors.mode === 'none' ? '#d73a49' : snapshot.colors.up;
       const rowHighlightDown = snapshot.colors.mode === 'none' ? '#16a34a' : snapshot.colors.down;
-      dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
+      const groupStatUp = snapshot.colors.up;
+      const groupStatDown = 'color-mix(in srgb, ' + snapshot.colors.down + ' 80%, var(--surface) 20%)';
+      dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--group-stat-up:' + groupStatUp + ';--group-stat-down:' + groupStatDown + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
       toggle.dataset.running = String(snapshot.running);
       toggle.textContent = snapshot.running ? '⏸' : '▶';
       toggle.title = snapshot.running ? t('pause') : t('start');
@@ -2798,21 +2816,21 @@ class QuotesViewProvider {
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
-        const upStat = stats.up > 0 ? '<span class="up">↑' + stats.up + '</span>' : '';
-        const downStat = stats.down > 0 ? '<span class="down">↓' + stats.down + '</span>' : '';
-        const flatStat = stats.flat > 0 ? '<span class="flat">=' + stats.flat + '</span>' : '';
+        const groupStats = '<span class="group-stats" title="' + escapeHtml(t('risingCount') + ': ' + stats.up + ', ' + t('fallingCount') + ': ' + stats.down) + '">' +
+          '<span>(</span>' +
+          '<span class="group-stats-up">' + stats.up + '</span>' +
+          '<span>:</span>' +
+          '<span class="group-stats-down">' + stats.down + '</span>' +
+          '<span>)</span>' +
+        '</span>';
         return '<section class="group' + (editing ? ' editing' : '') + '">' +
           '<div class="group-title">' +
             '<span class="group-title-main">' +
               '<button class="secondary icon-button" data-action="toggleGroup" data-group="' + escapeHtml(group.name) + '" title="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '" aria-label="' + (collapsed ? escapeHtml(t('expand')) : escapeHtml(t('collapse'))) + '">' + (collapsed ? '›' : '⌄') + '</button>' +
               '<span class="group-name' + (flashGroupNames ? ' refresh-succeeded' : '') + '">' + escapeHtml(group.name) + '</span>' +
+              groupStats +
             '</span>' +
             '<span class="group-title-actions">' +
-              '<span class="group-stats">' +
-                upStat +
-                downStat +
-                flatStat +
-              '</span>' +
               renderGroupAddButton(group.name, adding) +
               renderGroupEditButton(group.name, editing) +
             '</span>' +
