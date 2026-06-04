@@ -1451,11 +1451,12 @@ class QuotesViewProvider {
       content: "";
       position: absolute;
       left: 0;
-      top: 0;
-      bottom: 0;
+      top: 50%;
       width: 2px;
+      height: 61.8%;
       border-radius: 0;
       opacity: 0.46;
+      transform: translateY(-50%);
       pointer-events: none;
     }
 
