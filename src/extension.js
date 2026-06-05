@@ -1433,10 +1433,10 @@ class QuotesViewProvider {
     .quote {
       display: grid;
       position: relative;
-      gap: 6px;
+      gap: 5px;
       align-items: center;
       min-width: 0;
-      padding: 7px 8px;
+      padding: 4px 7px;
       border-top: 1px solid var(--border);
       background: transparent;
       transition: background 120ms ease;
@@ -1556,8 +1556,8 @@ class QuotesViewProvider {
     .group-summary {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-      gap: 10px;
-      padding: 7px 8px;
+      gap: 8px;
+      padding: 5px 7px;
       border-top: 1px solid var(--border);
       color: var(--vscode-foreground);
       font-variant-numeric: tabular-nums;
@@ -1657,16 +1657,41 @@ class QuotesViewProvider {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 14px;
-      height: 14px;
-      margin-left: 6px;
+      position: relative;
+      top: 0;
+      width: 10px;
+      height: 8px;
+      margin-left: 4px;
       border: 1px solid currentColor;
-      border-radius: 50%;
+      border-radius: 5px 5px 2px 2px;
       color: var(--vscode-notificationsWarningIcon-foreground, var(--up));
-      font-size: 10px;
-      font-weight: 700;
       line-height: 1;
-      vertical-align: text-bottom;
+      vertical-align: middle;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+    }
+
+    .alert-badge::before {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 3px;
+      height: 2px;
+      border-radius: 2px;
+      background: currentColor;
+      opacity: 0.75;
+    }
+
+    .alert-badge::after {
+      content: '';
+      position: absolute;
+      right: -1px;
+      bottom: -2px;
+      left: -1px;
+      height: 1px;
+      border-radius: 2px;
+      background: currentColor;
+      opacity: 0.85;
     }
 
     .code,
@@ -1709,8 +1734,8 @@ class QuotesViewProvider {
       max-width: 86px;
       text-align: right;
       font-variant-numeric: tabular-nums;
-      padding: 3px 5px;
-      min-height: 24px;
+      padding: 2px 5px;
+      min-height: 22px;
     }
 
     .cell-input.text-input {
@@ -3092,7 +3117,7 @@ class QuotesViewProvider {
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '" aria-label="' + escapeHtml(t('alert')) + '">!</span>' : '') + '</div>' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '" aria-label="' + escapeHtml(t('alert')) + '"></span>' : '') + '</div>' +
         '</div>';
       }
       if (column === 'alias') {

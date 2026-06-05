@@ -8,6 +8,14 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.4] - 2026-06-05
+
+### Changed
+
+- Bumped the extension version from `0.2.3` to `0.2.4`.
+- Changed in-panel alert badges from an exclamation marker to a compact alarm-style icon.
+- Tightened quote rows and group summary spacing for a denser group list.
+
 ## [0.2.3] - 2026-06-04
 
 ### Changed
