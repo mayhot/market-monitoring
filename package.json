@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -644,6 +644,36 @@
                 "default": 2,
                 "minimum": 0,
                 "description": "Bollinger band standard-deviation multiplier."
+              },
+              "intradayHighPullback": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when the symbol's high rises above today's open, change percentage turns negative, and price has fallen from today's high by more than the configured percentage. After close, the daily K-line close is used."
+              },
+              "intradayHighPullbackPercent": {
+                "type": "number",
+                "default": 2,
+                "minimum": 0,
+                "description": "Minimum pullback percentage from today's high for intradayHighPullback."
+              },
+              "intradayDowntrendConfirmTicks": {
+                "type": "integer",
+                "default": 3,
+                "minimum": 1,
+                "maximum": 10,
+                "description": "Number of consecutive refreshes required to confirm an intraday downtrend."
+              },
+              "intradayDowntrendSlopePoints": {
+                "type": "integer",
+                "default": 5,
+                "minimum": 2,
+                "maximum": 20,
+                "description": "Number of recent refresh prices used to confirm a negative intraday slope."
+              },
+              "intradayVwapBelow": {
+                "type": "boolean",
+                "default": true,
+                "description": "Require price to be below intraday VWAP when VWAP is available."
               }
             },
             "additionalProperties": false

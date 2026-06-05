@@ -116,7 +116,12 @@
       "lowBreakDays": 20,
       "rsiWeak": true,
       "rsiBelow": 50,
-      "bollingerBelow": "middle"
+      "bollingerBelow": "middle",
+      "intradayHighPullback": true,
+      "intradayHighPullbackPercent": 2,
+      "intradayDowntrendConfirmTicks": 3,
+      "intradayDowntrendSlopePoints": 5,
+      "intradayVwapBelow": true
     }
   ],
   "marketMonitoring.enableAlerts": true,
@@ -125,6 +130,8 @@
 ```
 
 When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets a default `movingAverageBelow: true` alert with `movingAverageDays: 20`. Add an explicit alert rule with `movingAverageBelow: false` to disable it for a symbol.
+
+`intradayHighPullback` 会在标的当日最高价高于开盘价、当前涨跌幅转为负值，且从当日最高点回落幅度超过 `intradayHighPullbackPercent` 时触发。盘中会结合实时分时 VWAP（可用时）、最近刷新价格斜率和 `intradayDowntrendConfirmTicks` 连续确认来判断分时下跌趋势；收盘后会按当日日 K 收盘价继续展示预警。
 
 预警触发后会：
 
@@ -230,7 +237,7 @@ When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets a 
 
 ## 刷新时段
 
-默认仅在内置活跃交易时段刷新。非交易时段会在缺少本地行情快照时拉取一次最新行情，用于显示收盘后的价格；之后不会按高频间隔持续刷新。节假日不会自动识别。如果需要全天刷新，可将 `marketMonitoring.onlyDuringTradingTime` 设为 `false`。
+默认仅在内置活跃交易时段刷新。非交易时段会在缺少本地行情快照时拉取一次最新行情，并会在 15:00 后补拉一次收盘行情，用于显示收盘后的价格和预警；之后不会按高频间隔持续刷新。节假日不会自动识别。如果需要全天刷新，可将 `marketMonitoring.onlyDuringTradingTime` 设为 `false`。
 
 行情数据优先来自新浪财经公开行情接口，失败后会自动切换到腾讯行情接口。扩展会在本机 VS Code 进程中直接请求接口。默认请求超时为 10 秒，可通过 `marketMonitoring.requestTimeoutMs` 调整。
 

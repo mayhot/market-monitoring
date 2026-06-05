@@ -8,6 +8,28 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.5] - 2026-06-05
+
+### Added
+
+- Added default intraday high-pullback alerts for configured symbols.
+- Added intraday downtrend confirmation using realtime VWAP, recent refresh-price slope, and consecutive confirmation ticks.
+- Added alert evaluation logs with rule-type summaries for easier diagnostics.
+
+### Changed
+
+- Bumped the extension version from `0.2.4` to `0.2.5`.
+- Kept intraday high-pullback alerts visible after close by evaluating cached closing snapshots without requiring live tick confirmation.
+- Used realtime quote open/high/VWAP fields for intraday pullback checks instead of requiring daily K-line history.
+- Changed the intraday high-pullback badge to a lighter downward arrow.
+- Limited and summarized K-line alert data request failures to reduce noisy logs.
+
+### Fixed
+
+- Evaluated alert rules against cached snapshots when refreshes are skipped outside trading hours.
+- Prevented overlapping alert evaluations for the same cached quote snapshot.
+- Forced a realtime quote refresh when cached quotes are missing fields required by intraday alert rules.
+
 ## [0.2.4] - 2026-06-05
 
 ### Changed

@@ -20,6 +20,9 @@ const DEFAULT_LOW_BREAK_DAYS = 20;
 const DEFAULT_RSI_DAYS = 14;
 const DEFAULT_BOLLINGER_DAYS = 20;
 const DEFAULT_BOLLINGER_STD_DEV = 2;
+const DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT = 2;
+const DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS = 3;
+const DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS = 5;
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -273,6 +276,11 @@ class MarketMonitor {
     this.notifiedAlertDate = alertNotificationCache.date === today ? alertNotificationCache.date : today;
     this.notifiedAlertCodes = new Set(alertNotificationCache.date === today ? alertNotificationCache.codes : []);
     this.dailyKlineCache = new Map();
+    this.intradayTrendState = new Map();
+    this.lastAlertEvaluationKey = '';
+    this.activeAlertEvaluationKey = '';
+    this.alertEvaluationPromise = undefined;
+    this.lastRefreshSkipKey = '';
     this.lastError = '';
     this.lastUpdatedAt = cachedSnapshot.updatedAt;
     this.lastUpdatedDate = cachedSnapshot.updatedDate;
@@ -313,6 +321,8 @@ class MarketMonitor {
 
   reloadConfiguration(reason = 'configurationChanged') {
     this.config = readConfig();
+    this.lastAlertEvaluationKey = '';
+    this.lastRefreshSkipKey = '';
     this.logInfo('Configuration reloaded', {
       reason,
       symbols: this.config.symbols.length,
@@ -707,16 +717,35 @@ class MarketMonitor {
       && !phase.isActive
       && quoteSymbols.length > 0
       && this.lastUpdatedDate !== getShanghaiDateString();
-    const shouldFetch = force || !this.config.onlyDuringTradingTime || phase.isActive || needsQuoteSnapshot(quoteSymbols, this.lastQuotes) || shouldRefreshCachedSnapshot;
+    const shouldRefreshClosingSnapshot = this.config.onlyDuringTradingTime
+      && !phase.isActive
+      && quoteSymbols.length > 0
+      && shouldRefreshAfterCloseSnapshot(this.lastUpdatedDate, this.lastUpdatedAt);
+    const shouldRefreshAlertFieldsSnapshot = this.config.enableAlerts
+      && quoteSymbols.length > 0
+      && needsAlertQuoteFieldsSnapshot(this.config.alerts, this.lastQuotes);
+    const shouldFetch = force
+      || !this.config.onlyDuringTradingTime
+      || phase.isActive
+      || needsQuoteSnapshot(quoteSymbols, this.lastQuotes)
+      || shouldRefreshCachedSnapshot
+      || shouldRefreshClosingSnapshot
+      || shouldRefreshAlertFieldsSnapshot;
 
     if (!shouldFetch) {
       this.lastError = '';
-      if (force) {
+      const skipKey = `${phase.name}:${this.lastUpdatedDate}:${this.lastUpdatedAt}:${this.lastQuotes.length}`;
+      if (force || this.lastRefreshSkipKey !== skipKey) {
         this.logInfo('Refresh skipped', {
           reason: 'notNeeded',
           phase: phase.name,
-          quotes: this.lastQuotes.length
+          quotes: this.lastQuotes.length,
+          cachedAt: this.lastUpdatedAt || ''
         });
+        this.lastRefreshSkipKey = skipKey;
+      }
+      if (this.shouldEvaluateCurrentAlertSnapshot()) {
+        await this.evaluateCurrentAlerts('cachedSnapshot');
       }
       this.updateViews(phase.name);
       this.schedule();
@@ -729,7 +758,16 @@ class MarketMonitor {
       phase: phase.name,
       symbols: this.config.symbols.length,
       totalCodes: quoteSymbols.length,
-      cachedQuotes: this.lastQuotes.length
+      cachedQuotes: this.lastQuotes.length,
+      reasons: {
+        force,
+        allDay: !this.config.onlyDuringTradingTime,
+        activePhase: phase.isActive,
+        missingQuotes: needsQuoteSnapshot(quoteSymbols, this.lastQuotes),
+        staleCachedDate: shouldRefreshCachedSnapshot,
+        afterCloseSnapshot: shouldRefreshClosingSnapshot,
+        missingAlertFields: shouldRefreshAlertFieldsSnapshot
+      }
     });
     this.updateViews(phase.name, true);
 
@@ -738,10 +776,7 @@ class MarketMonitor {
       this.lastQuotes = mergeWithPreviousQuotes(fetchedQuotes, this.lastQuotes);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
-      this.triggeredAlerts = this.config.enableAlerts
-        ? await evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, (message, details) => this.logInfo(message, details))
-        : [];
-      await this.notifyAlerts(this.triggeredAlerts);
+      await this.evaluateCurrentAlerts('refresh');
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
       this.logInfo('Refresh succeeded', {
@@ -759,6 +794,63 @@ class MarketMonitor {
       this.isRefreshing = false;
       this.updateViews(getMarketPhase().name);
       this.schedule();
+    }
+  }
+
+  shouldEvaluateCurrentAlertSnapshot() {
+    if (this.lastQuotes.length === 0) {
+      return false;
+    }
+    return this.lastAlertEvaluationKey !== this.getAlertEvaluationKey();
+  }
+
+  getAlertEvaluationKey() {
+    return [
+      this.lastUpdatedDate || '',
+      this.lastUpdatedAt || '',
+      this.config.enableAlerts ? 'enabled' : 'disabled',
+      this.config.alerts.length,
+      this.lastQuotes.length
+    ].join(':');
+  }
+
+  async evaluateCurrentAlerts(reason) {
+    const evaluationKey = this.getAlertEvaluationKey();
+    if (this.alertEvaluationPromise && this.activeAlertEvaluationKey === evaluationKey) {
+      await this.alertEvaluationPromise;
+      return;
+    }
+    if (!this.config.enableAlerts) {
+      this.triggeredAlerts = [];
+      this.lastAlertEvaluationKey = evaluationKey;
+      this.logInfo('Alerts skipped', {
+        reason: 'disabled'
+      });
+      return;
+    }
+
+    this.activeAlertEvaluationKey = evaluationKey;
+    this.alertEvaluationPromise = (async () => {
+      this.triggeredAlerts = await evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, (message, details) => this.logInfo(message, details));
+      this.lastAlertEvaluationKey = evaluationKey;
+      this.logInfo('Alerts evaluated', {
+        reason,
+        rules: this.config.alerts.length,
+        ruleTypes: summarizeAlertRules(this.config.alerts),
+        triggered: this.triggeredAlerts.length,
+        quotes: this.lastQuotes.length,
+        cachedAt: this.lastUpdatedAt || ''
+      });
+      await this.notifyAlerts(this.triggeredAlerts);
+    })();
+
+    try {
+      await this.alertEvaluationPromise;
+    } finally {
+      if (this.activeAlertEvaluationKey === evaluationKey) {
+        this.activeAlertEvaluationKey = '';
+        this.alertEvaluationPromise = undefined;
+      }
     }
   }
 
@@ -1692,6 +1784,17 @@ class QuotesViewProvider {
       border-radius: 2px;
       background: currentColor;
       opacity: 0.85;
+    }
+
+    .alert-badge-pullback {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-left: 4px;
+      color: color-mix(in srgb, var(--down) 72%, var(--vscode-foreground) 28%);
+      overflow: visible;
+      vertical-align: -2.5px;
+      opacity: 0.82;
     }
 
     .code,
@@ -3117,7 +3220,7 @@ class QuotesViewProvider {
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + (hasAlert ? '<span class="alert-badge" title="' + escapeHtml(alertText) + '" aria-label="' + escapeHtml(t('alert')) + '"></span>' : '') + '</div>' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -3151,6 +3254,21 @@ class QuotesViewProvider {
         return '<div class="' + cellClass + ' quote-change ' + profitTrend + '">' + (profit === null ? '--' : formatSignedDecimal(profit, digits)) + '</div>';
       }
       return '<div class="' + cellClass + '">--</div>';
+    }
+
+    function renderAlertBadge(alerts, alertText) {
+      if (!Array.isArray(alerts) || alerts.length === 0) {
+        return '';
+      }
+      const title = escapeHtml(alertText);
+      const label = escapeHtml(t('alert'));
+      if (alerts.some((alert) => alert && alert.type === 'intradayHighPullback')) {
+        return '<svg class="alert-badge-pullback" title="' + title + '" aria-label="' + label + '" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+          '<path d="M8 2.75V12.25" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"></path>' +
+          '<path d="M4.75 9L8 12.25L11.25 9" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"></path>' +
+        '</svg>';
+      }
+      return '<span class="alert-badge" title="' + title + '" aria-label="' + label + '"></span>';
     }
 
     function renderEditableNumber(quote, field, digits, step = 'any') {
@@ -3404,9 +3522,10 @@ function readConfig() {
   const groups = normalizeGroups(config.get('groups', [DEFAULT_GROUP]), symbols);
   const rawAlerts = config.get('alerts', []);
   const explicitAlertCodes = getExplicitAlertCodes(rawAlerts);
-  const alerts = addDefaultMovingAverageAlerts(symbols, rawAlerts
+  const normalizedAlerts = rawAlerts
     .map(normalizeAlertRule)
-    .filter(Boolean), explicitAlertCodes);
+    .filter(Boolean);
+  const alerts = addDefaultIntradayHighPullbackAlerts(symbols, addDefaultMovingAverageAlerts(symbols, normalizedAlerts, explicitAlertCodes));
   const language = sanitizeLanguage(config.get('language', DEFAULT_LANGUAGE));
   const ai = readAiConfig(config);
 
@@ -4176,6 +4295,41 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       name: symbol.name || '',
       movingAverageBelow: true,
       movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
+      intradayHighPullback: true,
+      intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
+      intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
+      intradayDowntrendSlopePoints: DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS,
+      intradayVwapBelow: true,
+      priceAbove: null,
+      priceBelow: null,
+      changePercentAbove: null,
+      changePercentBelow: null
+    });
+  }
+
+  return [...(alerts || []), ...defaults];
+}
+
+function addDefaultIntradayHighPullbackAlerts(symbols, alerts) {
+  const existingCodes = new Set((alerts || [])
+    .filter((alert) => alert && alert.intradayHighPullback)
+    .map((alert) => alert.code));
+  const defaults = [];
+
+  for (const symbol of symbols) {
+    if (!symbol || !symbol.code || existingCodes.has(symbol.code)) {
+      continue;
+    }
+
+    defaults.push({
+      code: symbol.code,
+      name: symbol.name || '',
+      movingAverageBelow: false,
+      intradayHighPullback: true,
+      intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
+      intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
+      intradayDowntrendSlopePoints: DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS,
+      intradayVwapBelow: true,
       priceAbove: null,
       priceBelow: null,
       changePercentAbove: null,
@@ -4226,7 +4380,12 @@ function normalizeAlertRule(item) {
     rsiBelow: clampNumber(optionalPositiveNumber(item.rsiBelow, 50), 0, 100),
     bollingerBelow: sanitizeBollingerBelow(item.bollingerBelow),
     bollingerDays: sanitizeMovingAverageDays(item.bollingerDays || DEFAULT_BOLLINGER_DAYS),
-    bollingerStdDev: optionalPositiveNumber(item.bollingerStdDev, DEFAULT_BOLLINGER_STD_DEV)
+    bollingerStdDev: optionalPositiveNumber(item.bollingerStdDev, DEFAULT_BOLLINGER_STD_DEV),
+    intradayHighPullback: item.intradayHighPullback === true,
+    intradayHighPullbackPercent: optionalPositiveNumber(item.intradayHighPullbackPercent, DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT),
+    intradayDowntrendConfirmTicks: sanitizeIntradayConfirmTicks(item.intradayDowntrendConfirmTicks),
+    intradayDowntrendSlopePoints: sanitizeIntradaySlopePoints(item.intradayDowntrendSlopePoints),
+    intradayVwapBelow: item.intradayVwapBelow !== false
   };
 
   if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !hasTechnicalAlertIndicator(technicalIndicators)) {
@@ -4323,6 +4482,22 @@ function sanitizeMovingAverageDays(value) {
   return Math.min(MAX_MOVING_AVERAGE_DAYS, Math.max(1, parsed));
 }
 
+function sanitizeIntradayConfirmTicks(value) {
+  const parsed = optionalInteger(value);
+  if (parsed === null) {
+    return DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS;
+  }
+  return Math.min(10, Math.max(1, parsed));
+}
+
+function sanitizeIntradaySlopePoints(value) {
+  const parsed = optionalInteger(value);
+  if (parsed === null) {
+    return DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS;
+  }
+  return Math.min(20, Math.max(2, parsed));
+}
+
 function sanitizeBollingerBelow(value) {
   if (value === true) {
     return 'middle';
@@ -4334,6 +4509,13 @@ function sanitizeBollingerBelow(value) {
 }
 
 function hasTechnicalAlertIndicator(indicators) {
+  return Boolean(
+    hasDailyKlineAlertIndicator(indicators)
+    || indicators.intradayHighPullback
+  );
+}
+
+function hasDailyKlineAlertIndicator(indicators) {
   return Boolean(
     indicators.bearishMovingAverage
     || indicators.macdDeathCross
@@ -4643,9 +4825,15 @@ async function writeCachedQuoteSnapshot(globalState, quotes, updatedAt, updatedD
     quotes: quotes.filter(isUsableQuote).map((quote) => ({
       code: quote.code,
       price: quote.price,
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
       previousClose: quote.previousClose,
       change: quote.change,
       changePercent: quote.changePercent,
+      volume: quote.volume,
+      amount: quote.amount,
+      intradayVwap: quote.intradayVwap,
       time: quote.time,
       status: quote.status
     }))
@@ -4683,15 +4871,21 @@ function normalizeCachedQuote(value) {
   return {
     code,
     price: optionalNumber(value.price),
+    open: optionalNumber(value.open),
+    high: optionalNumber(value.high),
+    low: optionalNumber(value.low),
     previousClose: optionalNumber(value.previousClose),
     change: optionalNumber(value.change),
     changePercent: optionalNumber(value.changePercent),
+    volume: optionalNumber(value.volume),
+    amount: optionalNumber(value.amount),
+    intradayVwap: optionalNumber(value.intradayVwap),
     time: typeof value.time === 'string' ? value.time : '',
     status: typeof value.status === 'string' ? value.status : ''
   };
 }
 
-async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, log) {
+async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, intradayTrendState, log) {
   if (!rules || rules.length === 0) {
     return [];
   }
@@ -4709,7 +4903,7 @@ async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dail
 
     const displayName = rule.name || quote.name || quote.code;
     addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
-    addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces);
+    addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces, intradayTrendState);
     addAlertIfMet(alerts, quote, displayName, 'priceAbove', rule.priceAbove, quote.price, '价格 >=', priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'priceBelow', rule.priceBelow, quote.price, '价格 <=', priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'changePercentAbove', rule.changePercentAbove, quote.changePercent, '涨跌幅 >=', 2, '%');
@@ -4717,6 +4911,33 @@ async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dail
   }
 
   return alerts;
+}
+
+function summarizeAlertRules(rules) {
+  const summary = {
+    movingAverageBelow: 0,
+    intradayHighPullback: 0,
+    threshold: 0,
+    dailyTechnical: 0
+  };
+  for (const rule of rules || []) {
+    if (!rule) {
+      continue;
+    }
+    if (rule.movingAverageBelow) {
+      summary.movingAverageBelow += 1;
+    }
+    if (rule.intradayHighPullback) {
+      summary.intradayHighPullback += 1;
+    }
+    if (rule.priceAbove !== null || rule.priceBelow !== null || rule.changePercentAbove !== null || rule.changePercentBelow !== null) {
+      summary.threshold += 1;
+    }
+    if (hasDailyKlineAlertIndicator(rule)) {
+      summary.dailyTechnical += 1;
+    }
+  }
+  return summary;
 }
 
 function addAlertIfMet(alerts, quote, displayName, field, threshold, value, label, digits, suffix = '') {
@@ -4746,6 +4967,7 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
   const snapshots = new Map();
   const tasks = [];
   const requested = new Set();
+  const failures = [];
 
   for (const rule of rules) {
     if (!rule.movingAverageBelow) {
@@ -4762,19 +4984,29 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
       continue;
     }
     requested.add(key);
-    tasks.push(fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache, log)
+    tasks.push(() => fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache)
       .then((snapshot) => {
+        if (snapshot && snapshot.error) {
+          failures.push(snapshot);
+          return;
+        }
         if (snapshot) {
           snapshots.set(key, snapshot);
         }
       }));
   }
 
-  await Promise.all(tasks);
+  await runLimited(tasks, 4);
+  if (failures.length > 0 && log) {
+    log('Moving average alert data failed', {
+      failed: failures.length,
+      samples: failures.slice(0, 8)
+    });
+  }
   return snapshots;
 }
 
-async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache, log) {
+async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache) {
   try {
     const bars = await fetchDailyKlineBars(quote.code, days + 10, timeoutMs, dailyKlineCache);
     const today = getShanghaiDateString();
@@ -4797,15 +5029,23 @@ async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCach
       samples: closes.length
     };
   } catch (error) {
-    if (log) {
-      log('Moving average alert data failed', {
-        code: quote.code,
-        days,
-        error: getErrorMessage(error)
-      });
-    }
-    return null;
+    return {
+      code: quote.code,
+      days,
+      error: getErrorMessage(error)
+    };
   }
+}
+
+async function runLimited(tasks, limit) {
+  const pending = [...tasks];
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), pending.length) }, async () => {
+    while (pending.length > 0) {
+      const task = pending.shift();
+      await task();
+    }
+  });
+  await Promise.all(workers);
 }
 
 async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
@@ -4815,7 +5055,8 @@ async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
   }
 
   const normalizedLimit = Math.max(1, Math.trunc(limit));
-  const cacheKey = `${getShanghaiDateString()}:${code}`;
+  const closeFinalized = isAfterShanghaiClose();
+  const cacheKey = `${getShanghaiDateString()}:${code}${closeFinalized ? ':closed' : ''}`;
   if (dailyKlineCache && dailyKlineCache.has(cacheKey)) {
     const cachedBars = dailyKlineCache.get(cacheKey);
     if (Array.isArray(cachedBars) && cachedBars.length >= normalizedLimit) {
@@ -4900,7 +5141,7 @@ async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dail
   const limitsByCode = new Map();
 
   for (const rule of rules) {
-    if (!hasTechnicalAlertIndicator(rule)) {
+    if (!hasDailyKlineAlertIndicator(rule)) {
       continue;
     }
 
@@ -4914,7 +5155,7 @@ async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dail
   }
 
   for (const [code, limit] of limitsByCode.entries()) {
-    tasks.push(fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache)
+    tasks.push(() => fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache)
       .then((bars) => snapshots.set(code, bars))
       .catch((error) => {
         snapshots.set(code, []);
@@ -4928,7 +5169,7 @@ async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dail
       }));
   }
 
-  await Promise.all(tasks);
+  await runLimited(tasks, 4);
   return snapshots;
 }
 
@@ -4945,19 +5186,22 @@ function getTechnicalHistoryLimit(rule) {
   return Math.min(MAX_MOVING_AVERAGE_DAYS + 30, Math.max(...values.filter((value) => Number.isFinite(value))));
 }
 
-function addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces) {
+function addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnapshots, priceDecimalPlaces, intradayTrendState) {
   const bars = technicalSnapshots.get(rule.code) || [];
-  if (bars.length === 0 || quote.price === null) {
+  if (quote.price === null) {
     return;
   }
 
-  addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
-  addMacdDeathCrossAlertIfMet(alerts, quote, displayName, rule, bars);
-  addVolumeDropAlertIfMet(alerts, quote, displayName, rule, bars);
-  addReboundLowVolumeAlertIfMet(alerts, quote, displayName, rule, bars);
-  addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
-  addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars);
-  addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+  if (bars.length > 0) {
+    addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+    addMacdDeathCrossAlertIfMet(alerts, quote, displayName, rule, bars);
+    addVolumeDropAlertIfMet(alerts, quote, displayName, rule, bars);
+    addReboundLowVolumeAlertIfMet(alerts, quote, displayName, rule, bars);
+    addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+    addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars);
+    addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+  }
+  addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces, intradayTrendState);
 }
 
 function addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces) {
@@ -5119,6 +5363,133 @@ function addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, pri
     label: `${label} ${target.toFixed(priceDecimalPlaces)}`,
     message: `${displayName} ${label}，当前 ${quote.price.toFixed(priceDecimalPlaces)}，阈值 ${target.toFixed(priceDecimalPlaces)}`
   });
+}
+
+function addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces, intradayTrendState) {
+  if (!rule.intradayHighPullback) {
+    return;
+  }
+
+  const currentBar = getIntradayCurrentBar(quote, bars);
+  if (!currentBar) {
+    return;
+  }
+
+  const afterClose = isAfterShanghaiClose();
+  const useClosingPrice = afterClose && Number.isFinite(currentBar.close) && currentBar.close > 0;
+  const currentPrice = useClosingPrice ? currentBar.close : quote.price;
+  const previousClose = Number.isFinite(quote.previousClose) && quote.previousClose > 0 ? quote.previousClose : null;
+  const changePercent = previousClose === null ? quote.changePercent : ((currentPrice - previousClose) / previousClose) * 100;
+  const belowVwap = !rule.intradayVwapBelow || !Number.isFinite(quote.intradayVwap) || currentPrice < quote.intradayVwap;
+  if (
+    currentBar.high <= currentBar.open
+    || !Number.isFinite(currentPrice)
+    || currentPrice >= currentBar.high
+    || !(changePercent < 0)
+    || !belowVwap
+  ) {
+    updateIntradayDowntrendState(intradayTrendState, quote, currentPrice, false, rule);
+    return;
+  }
+
+  const pullbackPercent = ((currentBar.high - currentPrice) / currentBar.high) * 100;
+  if (pullbackPercent <= rule.intradayHighPullbackPercent) {
+    updateIntradayDowntrendState(intradayTrendState, quote, currentPrice, false, rule);
+    return;
+  }
+
+  const trendState = updateIntradayDowntrendState(intradayTrendState, quote, currentPrice, true, rule);
+  if (!afterClose && !trendState.confirmed) {
+    return;
+  }
+
+  const alertLabel = `由涨转跌，高点回落 ${pullbackPercent.toFixed(2)}%`;
+  const changePercentText = changePercent === null ? '' : `，涨跌幅 ${changePercent.toFixed(2)}%`;
+  const priceLabel = useClosingPrice ? '收盘' : '当前';
+  const vwapText = Number.isFinite(quote.intradayVwap) ? `，VWAP ${quote.intradayVwap.toFixed(priceDecimalPlaces)}` : '';
+  alerts.push({
+    key: `${quote.code}:intradayHighPullback:${rule.intradayHighPullbackPercent}`,
+    type: 'intradayHighPullback',
+    code: quote.code,
+    name: displayName,
+    label: alertLabel,
+    message: `${displayName} 当日最高价高于开盘价后转为下跌，从最高点 ${currentBar.high.toFixed(priceDecimalPlaces)} 回落 ${pullbackPercent.toFixed(2)}%，开盘 ${currentBar.open.toFixed(priceDecimalPlaces)}，${priceLabel} ${currentPrice.toFixed(priceDecimalPlaces)}${vwapText}${changePercentText}`
+  });
+}
+
+function getIntradayCurrentBar(quote, bars) {
+  const today = getShanghaiDateString();
+  const currentBar = [...bars].reverse().find((bar) => bar.date === today);
+  const open = getFirstFinitePositive(currentBar && currentBar.open, quote.open);
+  const high = getFirstFinitePositive(currentBar && currentBar.high, quote.high);
+  if (!Number.isFinite(open) || !Number.isFinite(high)) {
+    return null;
+  }
+  return {
+    open,
+    high,
+    close: getFirstFinitePositive(currentBar && currentBar.close)
+  };
+}
+
+function getFirstFinitePositive(...values) {
+  for (const value of values) {
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function updateIntradayDowntrendState(stateMap, quote, currentPrice, staticMatched, rule) {
+  if (!stateMap || !quote || !quote.code || !Number.isFinite(currentPrice)) {
+    return { confirmed: true, confirmTicks: 0, slope: null };
+  }
+
+  const state = stateMap.get(quote.code) || { samples: [], confirmTicks: 0, sampleId: 0, lastUpdatedMs: 0 };
+  const now = Date.now();
+  if (!state.lastUpdatedMs || now - state.lastUpdatedMs >= 1000) {
+    state.samples.push(currentPrice);
+    state.samples = state.samples.slice(-Math.max(rule.intradayDowntrendSlopePoints, 20));
+    state.sampleId += 1;
+    state.lastUpdatedMs = now;
+  }
+
+  const slope = calculatePriceSlope(state.samples, rule.intradayDowntrendSlopePoints);
+  const matched = Boolean(staticMatched && slope !== null && slope < 0);
+  if (state.lastMatchedSampleId !== state.sampleId) {
+    state.confirmTicks = matched ? state.confirmTicks + 1 : 0;
+    state.lastMatchedSampleId = state.sampleId;
+  }
+
+  state.lastSlope = slope;
+  state.lastMatched = matched;
+  stateMap.set(quote.code, state);
+
+  return {
+    confirmed: state.confirmTicks >= rule.intradayDowntrendConfirmTicks,
+    confirmTicks: state.confirmTicks,
+    slope
+  };
+}
+
+function calculatePriceSlope(samples, points) {
+  if (!Array.isArray(samples) || samples.length < points) {
+    return null;
+  }
+  const values = samples.slice(-points);
+  const xMean = (values.length - 1) / 2;
+  const yMean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  let numerator = 0;
+  let denominator = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    numerator += (index - xMean) * (values[index] - yMean);
+    denominator += Math.pow(index - xMean, 2);
+  }
+  if (denominator === 0 || yMean <= 0) {
+    return null;
+  }
+  return (numerator / denominator) / yMean;
 }
 
 function calculateMovingAverageFromBars(bars, currentPrice, days) {
@@ -5361,17 +5732,28 @@ function parseSinaResponse(body) {
     const open = parseNumber(fields[1]);
     const previousClose = parseNumber(fields[2]);
     const latest = parseNumber(fields[3]);
+    const high = parseNumber(fields[4]);
+    const low = parseNumber(fields[5]);
+    const volume = parseNumber(fields[8]);
+    const amount = parseNumber(fields[9]);
     const price = latest > 0 ? latest : open > 0 ? open : null;
     const change = price !== null && previousClose > 0 ? price - previousClose : null;
     const changePercent = change !== null ? (change / previousClose) * 100 : null;
+    const intradayVwap = calculateIntradayVwap(volume, amount);
     const date = fields[30] || '';
     const time = fields[31] || '';
 
     quotes.set(code, {
       price,
+      open: open > 0 ? open : null,
+      high: high > 0 ? high : null,
+      low: low > 0 ? low : null,
       previousClose: previousClose > 0 ? previousClose : null,
       change,
       changePercent,
+      volume: volume > 0 ? volume : null,
+      amount: amount > 0 ? amount : null,
+      intradayVwap,
       time: date && time ? `${time}` : time,
       status: price === null ? '无成交' : ''
     });
@@ -5395,6 +5777,8 @@ function parseTencentResponse(body) {
     const latest = parseNumber(fields[3]);
     const previousClose = parseNumber(fields[4]);
     const open = parseNumber(fields[5]);
+    const high = parseNumber(fields[33]);
+    const low = parseNumber(fields[34]);
     const price = latest > 0 ? latest : open > 0 ? open : null;
     const fieldChange = optionalNumber(fields[31]);
     const fieldChangePercent = optionalNumber(fields[32]);
@@ -5413,9 +5797,15 @@ function parseTencentResponse(body) {
 
     quotes.set(code, {
       price,
+      open: open > 0 ? open : null,
+      high: high > 0 ? high : null,
+      low: low > 0 ? low : null,
       previousClose: previousClose > 0 ? previousClose : null,
       change,
       changePercent,
+      volume: null,
+      amount: null,
+      intradayVwap: null,
       time,
       status: price === null ? '无成交' : ''
     });
@@ -5448,6 +5838,50 @@ function needsQuoteSnapshot(symbols, quotes) {
   return symbols.some((symbol) => !quotedCodes.has(symbol.code));
 }
 
+function needsAlertQuoteFieldsSnapshot(rules, quotes) {
+  if (!Array.isArray(rules) || !rules.some((rule) => rule && rule.intradayHighPullback)) {
+    return false;
+  }
+  const quoteByCode = new Map(quotes.map((quote) => [quote.code, quote]));
+  return rules.some((rule) => {
+    if (!rule || !rule.intradayHighPullback) {
+      return false;
+    }
+    const quote = quoteByCode.get(rule.code);
+    return !quote || !Number.isFinite(quote.open) || !Number.isFinite(quote.high);
+  });
+}
+
+function shouldRefreshAfterCloseSnapshot(lastUpdatedDate, lastUpdatedAt) {
+  const today = getShanghaiDateString();
+  if (lastUpdatedDate !== today || !isAfterShanghaiClose()) {
+    return false;
+  }
+  const lastUpdatedMinutes = parseTimeToMinutes(lastUpdatedAt);
+  return lastUpdatedMinutes !== null && lastUpdatedMinutes < 15 * 60;
+}
+
+function isAfterShanghaiClose() {
+  const now = getShanghaiTimeParts();
+  if (now.weekday === 6 || now.weekday === 7) {
+    return false;
+  }
+  return now.hour * 60 + now.minute > 15 * 60;
+}
+
+function parseTimeToMinutes(value) {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) {
+    return null;
+  }
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
+  }
+  return hour * 60 + minute;
+}
+
 function mergeWithPreviousQuotes(quotes, previousQuotes) {
   const previousByCode = new Map(previousQuotes.map((quote) => [quote.code, quote]));
   return quotes.map((quote) => {
@@ -5459,9 +5893,15 @@ function mergeWithPreviousQuotes(quotes, previousQuotes) {
     return {
       ...quote,
       price: previous.price,
+      open: previous.open,
+      high: previous.high,
+      low: previous.low,
       previousClose: previous.previousClose,
       change: previous.change,
       changePercent: previous.changePercent,
+      volume: previous.volume,
+      amount: previous.amount,
+      intradayVwap: previous.intradayVwap,
       time: previous.time,
       status: previous.status
     };
@@ -6212,6 +6652,14 @@ function getShanghaiTimeParts() {
 function parseNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function calculateIntradayVwap(volume, amount) {
+  if (!Number.isFinite(volume) || !Number.isFinite(amount) || volume <= 0 || amount <= 0) {
+    return null;
+  }
+  const value = amount / volume;
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function formatPercent(value) {
