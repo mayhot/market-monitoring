@@ -94,7 +94,7 @@ function activate(context) {
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${getExtensionId(context)}`);
     }),
-    vscode.commands.registerCommand('marketMonitoring.configureQuoteColumns', () => configureQuoteColumns()),
+    vscode.commands.registerCommand('marketMonitoring.configureQuoteColumns', () => monitor.runWithRefreshPaused(() => configureQuoteColumns(), 'configureQuoteColumns')),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_SECTION)) {
         monitor.reloadConfiguration();
@@ -118,6 +118,8 @@ function activate(context) {
     } else if (message.command === 'aiManage') {
       monitor.aiManage(message.prompt, message.requestId);
     } else if (message.command === 'webviewReady') {
+      monitor.updateCollapsedGroups(message.collapsedGroups);
+      monitor.updateEditingState(message.editing);
       monitor.webviewReady();
     } else if (message.command === 'webviewError') {
       monitor.logError('Webview error', {
@@ -146,6 +148,10 @@ function activate(context) {
       monitor.refresh(true);
     } else if (message.command === 'updateSymbolField') {
       monitor.updateSymbolField(message.index, message.field, message.value);
+    } else if (message.command === 'collapsedGroupsChanged') {
+      monitor.updateCollapsedGroups(message.collapsedGroups);
+    } else if (message.command === 'editingStateChanged') {
+      monitor.updateEditingState(message.editing);
     }
   });
 
@@ -269,6 +275,7 @@ class MarketMonitor {
     this.running = false;
     const cachedSnapshot = readCachedQuoteSnapshot(this.context.globalState);
     this.lastQuotes = cachedSnapshot.quotes;
+    this.groupStatsQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
     const alertNotificationCache = readAlertNotificationCache(this.context.globalState);
@@ -285,6 +292,10 @@ class MarketMonitor {
     this.lastUpdatedAt = cachedSnapshot.updatedAt;
     this.lastUpdatedDate = cachedSnapshot.updatedDate;
     this.isRefreshing = false;
+    this.collapsedGroups = {};
+    this.editingRefreshPaused = false;
+    this.configureRefreshPauseDepth = 0;
+    this.pendingRefreshAfterPause = false;
     this.config = readConfig();
     this.logInfo('Activated', {
       extensionId: getExtensionId(context),
@@ -331,6 +342,14 @@ class MarketMonitor {
       onlyDuringTradingTime: this.config.onlyDuringTradingTime
     });
     this.updateViews(getMarketPhase().name, this.isRefreshing);
+    if (this.isRefreshPaused()) {
+      this.pendingRefreshAfterPause = true;
+      this.logInfo('Refresh deferred', {
+        reason: 'configurationReload',
+        pauseReasons: this.getRefreshPauseReasons()
+      });
+      return;
+    }
     this.schedule();
     this.refresh(false);
   }
@@ -338,6 +357,106 @@ class MarketMonitor {
   webviewReady() {
     this.logInfo('Webview ready');
     this.reloadConfiguration('webviewReady');
+  }
+
+  updateCollapsedGroups(collapsedGroups) {
+    const previous = this.collapsedGroups || {};
+    const next = normalizeCollapsedGroups(collapsedGroups);
+    const expandedGroups = Object.keys(previous).filter((group) => previous[group] && !next[group]);
+    const changed = !areCollapsedGroupsEqual(previous, next);
+    this.collapsedGroups = next;
+    if (!changed) {
+      return;
+    }
+
+    this.lastRefreshSkipKey = '';
+    this.logInfo('Group collapse state updated', {
+      collapsedGroups: Object.keys(next),
+      expandedGroups
+    });
+    if (expandedGroups.length > 0) {
+      this.refresh(true);
+    }
+  }
+
+  updateEditingState(editing) {
+    const nextEditing = Boolean(editing);
+    if (this.editingRefreshPaused === nextEditing) {
+      return;
+    }
+
+    this.editingRefreshPaused = nextEditing;
+    this.lastRefreshSkipKey = '';
+    if (nextEditing) {
+      this.clearRefreshTimer();
+      this.logInfo('Refresh paused', {
+        reason: 'editing',
+        pauseReasons: this.getRefreshPauseReasons()
+      });
+      return;
+    }
+
+    this.logInfo('Refresh pause ended', {
+      reason: 'editing',
+      pendingRefresh: this.pendingRefreshAfterPause
+    });
+    this.resumeRefreshAfterPause('editing');
+  }
+
+  async runWithRefreshPaused(callback, reason) {
+    this.configureRefreshPauseDepth += 1;
+    this.clearRefreshTimer();
+    this.logInfo('Refresh paused', {
+      reason,
+      pauseReasons: this.getRefreshPauseReasons()
+    });
+    try {
+      return await callback();
+    } finally {
+      this.configureRefreshPauseDepth = Math.max(0, this.configureRefreshPauseDepth - 1);
+      this.logInfo('Refresh pause ended', {
+        reason,
+        pendingRefresh: this.pendingRefreshAfterPause,
+        pauseReasons: this.getRefreshPauseReasons()
+      });
+      this.resumeRefreshAfterPause(reason);
+    }
+  }
+
+  isRefreshPaused() {
+    return this.editingRefreshPaused || this.configureRefreshPauseDepth > 0;
+  }
+
+  getRefreshPauseReasons() {
+    const reasons = [];
+    if (this.editingRefreshPaused) {
+      reasons.push('editing');
+    }
+    if (this.configureRefreshPauseDepth > 0) {
+      reasons.push('configuration');
+    }
+    return reasons;
+  }
+
+  resumeRefreshAfterPause(reason) {
+    if (this.isRefreshPaused() || !this.running) {
+      return;
+    }
+
+    if (this.pendingRefreshAfterPause) {
+      this.pendingRefreshAfterPause = false;
+      this.refresh(true);
+      return;
+    }
+
+    this.schedule();
+  }
+
+  clearRefreshTimer() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
   }
 
   logInfo(message, details) {
@@ -701,10 +820,15 @@ class MarketMonitor {
   }
 
   async refresh(force) {
-    if (!this.running || this.isRefreshing) {
+    if (!this.running || this.isRefreshing || this.isRefreshPaused()) {
+      const paused = this.isRefreshPaused();
+      if (paused && this.running) {
+        this.pendingRefreshAfterPause = true;
+      }
       if (force) {
         this.logWarn('Refresh skipped', {
-          reason: !this.running ? 'notRunning' : 'alreadyRefreshing',
+          reason: !this.running ? 'notRunning' : paused ? 'paused' : 'alreadyRefreshing',
+          pauseReasons: paused ? this.getRefreshPauseReasons() : [],
           force
         });
       }
@@ -713,6 +837,7 @@ class MarketMonitor {
 
     const phase = getMarketPhase();
     const quoteSymbols = mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS);
+    const realtimeQuoteSymbols = mergeQuoteSymbols(getRealtimeRefreshSymbols(this.config.symbols, this.collapsedGroups), INDEX_SYMBOLS);
     const shouldRefreshCachedSnapshot = this.config.onlyDuringTradingTime
       && !phase.isActive
       && quoteSymbols.length > 0
@@ -723,23 +848,25 @@ class MarketMonitor {
       && shouldRefreshAfterCloseSnapshot(this.lastUpdatedDate, this.lastUpdatedAt);
     const shouldRefreshAlertFieldsSnapshot = this.config.enableAlerts
       && quoteSymbols.length > 0
-      && needsAlertQuoteFieldsSnapshot(this.config.alerts, this.lastQuotes);
+      && needsAlertQuoteFieldsSnapshot(this.config.alerts, this.groupStatsQuotes);
     const shouldFetch = force
       || !this.config.onlyDuringTradingTime
       || phase.isActive
-      || needsQuoteSnapshot(quoteSymbols, this.lastQuotes)
+      || needsQuoteSnapshot(realtimeQuoteSymbols, this.lastQuotes)
+      || needsQuoteSnapshot(quoteSymbols, this.groupStatsQuotes)
       || shouldRefreshCachedSnapshot
       || shouldRefreshClosingSnapshot
       || shouldRefreshAlertFieldsSnapshot;
 
     if (!shouldFetch) {
       this.lastError = '';
-      const skipKey = `${phase.name}:${this.lastUpdatedDate}:${this.lastUpdatedAt}:${this.lastQuotes.length}`;
+      const skipKey = `${phase.name}:${this.lastUpdatedDate}:${this.lastUpdatedAt}:${this.lastQuotes.length}:${this.groupStatsQuotes.length}`;
       if (force || this.lastRefreshSkipKey !== skipKey) {
         this.logInfo('Refresh skipped', {
           reason: 'notNeeded',
           phase: phase.name,
           quotes: this.lastQuotes.length,
+          groupStatsQuotes: this.groupStatsQuotes.length,
           cachedAt: this.lastUpdatedAt || ''
         });
         this.lastRefreshSkipKey = skipKey;
@@ -758,12 +885,15 @@ class MarketMonitor {
       phase: phase.name,
       symbols: this.config.symbols.length,
       totalCodes: quoteSymbols.length,
+      realtimeCodes: realtimeQuoteSymbols.length,
       cachedQuotes: this.lastQuotes.length,
+      cachedGroupStatsQuotes: this.groupStatsQuotes.length,
       reasons: {
         force,
         allDay: !this.config.onlyDuringTradingTime,
         activePhase: phase.isActive,
-        missingQuotes: needsQuoteSnapshot(quoteSymbols, this.lastQuotes),
+        missingQuotes: needsQuoteSnapshot(realtimeQuoteSymbols, this.lastQuotes),
+        missingGroupStatsQuotes: needsQuoteSnapshot(quoteSymbols, this.groupStatsQuotes),
         staleCachedDate: shouldRefreshCachedSnapshot,
         afterCloseSnapshot: shouldRefreshClosingSnapshot,
         missingAlertFields: shouldRefreshAlertFieldsSnapshot
@@ -773,16 +903,28 @@ class MarketMonitor {
 
     try {
       const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs, (message, details) => this.logInfo(message, details));
-      this.lastQuotes = mergeWithPreviousQuotes(fetchedQuotes, this.lastQuotes);
+      if (this.isRefreshPaused()) {
+        this.pendingRefreshAfterPause = true;
+        this.logInfo('Refresh result ignored', {
+          reason: 'paused',
+          pauseReasons: this.getRefreshPauseReasons()
+        });
+        return;
+      }
+      const realtimeCodes = new Set(realtimeQuoteSymbols.map((symbol) => symbol.code));
+      this.lastQuotes = mergeQuoteUpdates(fetchedQuotes.filter((quote) => realtimeCodes.has(quote.code)), this.lastQuotes, quoteSymbols);
+      this.groupStatsQuotes = mergeQuoteUpdates(fetchedQuotes, this.groupStatsQuotes, quoteSymbols);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
       await this.evaluateCurrentAlerts('refresh');
       this.lastError = '';
-      await writeCachedQuoteSnapshot(this.context.globalState, this.lastQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
+      await writeCachedQuoteSnapshot(this.context.globalState, this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
       this.logInfo('Refresh succeeded', {
         quotes: this.lastQuotes.length,
+        groupStatsQuotes: this.groupStatsQuotes.length,
         usableQuotes: countUsableQuotes(this.lastQuotes),
         usableSymbols: countUsableCodes(this.lastQuotes, this.config.symbols.map((symbol) => symbol.code)),
+        usableGroupStatsSymbols: countUsableCodes(this.groupStatsQuotes, this.config.symbols.map((symbol) => symbol.code)),
         updatedAt: this.lastUpdatedAt
       });
     } catch (error) {
@@ -798,7 +940,7 @@ class MarketMonitor {
   }
 
   shouldEvaluateCurrentAlertSnapshot() {
-    if (this.lastQuotes.length === 0) {
+    if (this.groupStatsQuotes.length === 0) {
       return false;
     }
     return this.lastAlertEvaluationKey !== this.getAlertEvaluationKey();
@@ -810,7 +952,7 @@ class MarketMonitor {
       this.lastUpdatedAt || '',
       this.config.enableAlerts ? 'enabled' : 'disabled',
       this.config.alerts.length,
-      this.lastQuotes.length
+      this.groupStatsQuotes.length
     ].join(':');
   }
 
@@ -831,14 +973,14 @@ class MarketMonitor {
 
     this.activeAlertEvaluationKey = evaluationKey;
     this.alertEvaluationPromise = (async () => {
-      this.triggeredAlerts = await evaluateAlerts(this.lastQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, (message, details) => this.logInfo(message, details));
+      this.triggeredAlerts = await evaluateAlerts(this.groupStatsQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, (message, details) => this.logInfo(message, details));
       this.lastAlertEvaluationKey = evaluationKey;
       this.logInfo('Alerts evaluated', {
         reason,
         rules: this.config.alerts.length,
         ruleTypes: summarizeAlertRules(this.config.alerts),
         triggered: this.triggeredAlerts.length,
-        quotes: this.lastQuotes.length,
+        quotes: this.groupStatsQuotes.length,
         cachedAt: this.lastUpdatedAt || ''
       });
       await this.notifyAlerts(this.triggeredAlerts);
@@ -855,12 +997,9 @@ class MarketMonitor {
   }
 
   schedule() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-    }
+    this.clearRefreshTimer();
 
-    if (!this.running) {
+    if (!this.running || this.isRefreshPaused()) {
       return;
     }
 
@@ -980,7 +1119,7 @@ class MarketMonitor {
       configuredSymbols: this.config.symbols,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
-      groups: groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection)
+      groups: groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes)
     };
   }
 }
@@ -2199,6 +2338,7 @@ class QuotesViewProvider {
     let aiResult;
     let latestSnapshot;
     let lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
+    let lastSyncedEditingActive;
 
     refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
     importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
@@ -2231,8 +2371,12 @@ class QuotesViewProvider {
         name
       });
       groupName.value = '';
+      syncEditingState();
       groupName.focus();
     });
+    groupName.addEventListener('input', () => syncEditingState());
+    groupName.addEventListener('focus', () => syncEditingState());
+    groupName.addEventListener('blur', () => syncEditingState());
     app.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) {
@@ -2252,6 +2396,7 @@ class QuotesViewProvider {
           [group]: nextEditing
         };
         persistViewState();
+        syncEditingState();
         if (!nextEditing && document.activeElement && typeof document.activeElement.blur === 'function') {
           document.activeElement.blur();
         }
@@ -2273,6 +2418,7 @@ class QuotesViewProvider {
         symbolSearchError = '';
         symbolSearchLoading = false;
         persistViewState();
+        syncEditingState();
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
           focusGroupSearch(group);
@@ -2315,6 +2461,7 @@ class QuotesViewProvider {
         selectedSymbol = undefined;
         symbolSearchError = '';
         persistViewState();
+        syncEditingState();
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
           applyColumnWidths();
@@ -2338,6 +2485,7 @@ class QuotesViewProvider {
           [group]: !collapsedGroups[group]
         };
         persistViewState();
+        syncCollapsedGroups();
         if (latestSnapshot) {
           app.innerHTML = renderGroups(latestSnapshot.groups, latestSnapshot);
         }
@@ -2455,11 +2603,13 @@ class QuotesViewProvider {
         activeSymbolSearchRequestId = ++symbolSearchRequestId;
         symbolSearchResults = [];
         symbolSearchLoading = false;
+        syncEditingState();
         renderActiveSymbolResults();
         return;
       }
 
       symbolSearchLoading = true;
+      syncEditingState();
       renderActiveSymbolResults();
       const requestId = ++symbolSearchRequestId;
       activeSymbolSearchRequestId = requestId;
@@ -3460,6 +3610,35 @@ class QuotesViewProvider {
       vscode.setState(viewState);
     }
 
+    function syncCollapsedGroups() {
+      vscode.postMessage({
+        command: 'collapsedGroupsChanged',
+        collapsedGroups
+      });
+    }
+
+    function isEditingActive() {
+      return hasEnabledFlag(editingGroups)
+        || hasEnabledFlag(addingGroups)
+        || Boolean(String(groupName.value || '').trim());
+    }
+
+    function hasEnabledFlag(value) {
+      return Boolean(value && typeof value === 'object' && Object.values(value).some(Boolean));
+    }
+
+    function syncEditingState(force = false) {
+      const editing = isEditingActive();
+      if (!force && editing === lastSyncedEditingActive) {
+        return;
+      }
+      lastSyncedEditingActive = editing;
+      vscode.postMessage({
+        command: 'editingStateChanged',
+        editing
+      });
+    }
+
     function formatSigned(value, digits) {
       const formatted = formatDecimal(value, digits);
       return value > 0 ? '+' + formatted : formatted;
@@ -3506,7 +3685,8 @@ class QuotesViewProvider {
       });
     }
 
-    vscode.postMessage({ command: 'webviewReady' });
+    syncEditingState(true);
+    vscode.postMessage({ command: 'webviewReady', collapsedGroups, editing: isEditingActive() });
   </script>
 </body>
 </html>`;
@@ -5829,6 +6009,34 @@ function mergeQuoteSymbols(symbols, indexSymbols) {
   return merged;
 }
 
+function getRealtimeRefreshSymbols(symbols, collapsedGroups) {
+  const collapsed = normalizeCollapsedGroups(collapsedGroups);
+  return symbols.filter((symbol) => !collapsed[symbol.group || DEFAULT_GROUP]);
+}
+
+function normalizeCollapsedGroups(value) {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  return Object.entries(value).reduce((groups, [name, collapsed]) => {
+    const groupName = String(name || '').trim();
+    if (groupName && collapsed) {
+      groups[groupName] = true;
+    }
+    return groups;
+  }, {});
+}
+
+function areCollapsedGroupsEqual(left, right) {
+  const leftGroups = Object.keys(normalizeCollapsedGroups(left)).sort();
+  const rightGroups = Object.keys(normalizeCollapsedGroups(right)).sort();
+  if (leftGroups.length !== rightGroups.length) {
+    return false;
+  }
+  return leftGroups.every((group, index) => group === rightGroups[index]);
+}
+
 function needsQuoteSnapshot(symbols, quotes) {
   if (symbols.length === 0) {
     return false;
@@ -5882,30 +6090,48 @@ function parseTimeToMinutes(value) {
   return hour * 60 + minute;
 }
 
-function mergeWithPreviousQuotes(quotes, previousQuotes) {
+function mergeQuoteUpdates(quotes, previousQuotes, symbols) {
+  const mergedByCode = new Map(previousQuotes.map((quote) => [quote.code, quote]));
   const previousByCode = new Map(previousQuotes.map((quote) => [quote.code, quote]));
-  return quotes.map((quote) => {
-    const previous = previousByCode.get(quote.code);
-    if (isUsableQuote(quote) || !isUsableQuote(previous)) {
-      return quote;
-    }
+  for (const quote of quotes) {
+    mergedByCode.set(quote.code, mergeQuoteWithPrevious(quote, previousByCode.get(quote.code)));
+  }
 
-    return {
-      ...quote,
-      price: previous.price,
-      open: previous.open,
-      high: previous.high,
-      low: previous.low,
-      previousClose: previous.previousClose,
-      change: previous.change,
-      changePercent: previous.changePercent,
-      volume: previous.volume,
-      amount: previous.amount,
-      intradayVwap: previous.intradayVwap,
-      time: previous.time,
-      status: previous.status
-    };
-  });
+  const ordered = [];
+  const seen = new Set();
+  for (const symbol of symbols) {
+    if (!symbol || !symbol.code || seen.has(symbol.code)) {
+      continue;
+    }
+    seen.add(symbol.code);
+    const quote = mergedByCode.get(symbol.code);
+    if (quote) {
+      ordered.push(quote);
+    }
+  }
+  return ordered;
+}
+
+function mergeQuoteWithPrevious(quote, previous) {
+  if (isUsableQuote(quote) || !isUsableQuote(previous)) {
+    return quote;
+  }
+
+  return {
+    ...quote,
+    price: previous.price,
+    open: previous.open,
+    high: previous.high,
+    low: previous.low,
+    previousClose: previous.previousClose,
+    change: previous.change,
+    changePercent: previous.changePercent,
+    volume: previous.volume,
+    amount: previous.amount,
+    intradayVwap: previous.intradayVwap,
+    time: previous.time,
+    status: previous.status
+  };
 }
 
 function buildIndexQuotes(quotes) {
@@ -5936,10 +6162,11 @@ function buildIndexQuotes(quotes) {
   });
 }
 
-function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy, sortDirection) {
+function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy, sortDirection, statsQuotes = quotes) {
   const order = [];
   const groups = new Map();
   const quoteByCode = new Map(quotes.map((quote) => [quote.code, quote]));
+  const statsQuoteByCode = new Map(statsQuotes.map((quote) => [quote.code, quote]));
   const alertsByCode = groupAlertsByCode(alerts);
 
   for (const groupName of configuredGroups) {
@@ -5980,11 +6207,28 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
     });
   }
 
-  return order.map((name) => ({
-    name,
-    stats: calculateGroupStats(groups.get(name)),
-    items: sortQuotes(groups.get(name), sortBy, sortDirection)
-  }));
+  return order.map((name) => {
+    const items = groups.get(name);
+    return {
+      name,
+      stats: calculateGroupStats(getGroupStatsItems(items, statsQuoteByCode)),
+      items: sortQuotes(items, sortBy, sortDirection)
+    };
+  });
+}
+
+function getGroupStatsItems(items, statsQuoteByCode) {
+  return items.map((item) => {
+    const statsQuote = statsQuoteByCode.get(item.code);
+    if (!statsQuote) {
+      return item;
+    }
+    return {
+      ...item,
+      change: statsQuote.change,
+      changePercent: statsQuote.changePercent
+    };
+  });
 }
 
 function decodeCsvImportText(bytes) {

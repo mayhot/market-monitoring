@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.6] - 2026-06-09
+
+### Changed
+
+- Bumped the extension version from `0.2.5` to `0.2.6`.
+
+### Fixed
+
+- Kept collapsed group quote rows from refreshing while still updating the group rise/fall counts.
+- Paused all quote refreshes while editing groups, editing group symbols, or changing quote-column configuration, then resumed with a deferred refresh after editing ends.
+
 ## [0.2.5] - 2026-06-05
 
 ### Added
