@@ -8,6 +8,20 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.10] - 2026-06-11
+
+### Added
+
+- Added SQLite persistence for market view state, including the selected index, collapsed groups, per-group table sorting, column widths, and AI panel draft state.
+
+### Changed
+
+- Bumped the extension version from `0.2.9` to `0.2.10`.
+
+### Fixed
+
+- Fell back to the latest SQLite quote snapshot when live quote refresh fails so cached market data remains available offline.
+
 ## [0.2.9] - 2026-06-11
 
 ### Changed
