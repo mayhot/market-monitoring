@@ -1981,6 +1981,24 @@ class QuotesViewProvider {
       color: color-mix(in srgb, var(--down) 76%, var(--vscode-foreground) 24%);
     }
 
+    .alert-badge-direction {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-left: 3px;
+      overflow: visible;
+      vertical-align: -2.5px;
+      opacity: 0.84;
+    }
+
+    .alert-badge-direction-up {
+      color: color-mix(in srgb, var(--up) 76%, var(--vscode-foreground) 24%);
+    }
+
+    .alert-badge-direction-down {
+      color: color-mix(in srgb, var(--down) 76%, var(--vscode-foreground) 24%);
+    }
+
     .code,
     .meta {
       color: var(--muted);
@@ -3460,7 +3478,13 @@ class QuotesViewProvider {
       const movingAverageDays = getMaxMovingAverageAlertDays(alerts);
       const badgeText = movingAverageDays === null ? '!' : String(movingAverageDays);
       const levelClass = movingAverageDays === null ? ' alert-badge-generic' : ' alert-badge-level-' + movingAverageDays;
-      return '<span class="alert-badge' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(badgeText) + '</span>';
+      const badges = [
+        '<span class="alert-badge' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(badgeText) + '</span>'
+      ];
+      for (const direction of getAlertDirections(alerts)) {
+        badges.push(renderAlertDirectionBadge(direction, title, label));
+      }
+      return badges.join('');
     }
 
     function getMaxMovingAverageAlertDays(alerts) {
@@ -3468,6 +3492,61 @@ class QuotesViewProvider {
         .map((alert) => Number(alert && alert.movingAverageDays))
         .filter((value) => Number.isFinite(value) && value > 0);
       return days.length > 0 ? Math.max(...days) : null;
+    }
+
+    function getAlertDirections(alerts) {
+      const directions = [];
+      for (const alert of alerts) {
+        const direction = getAlertDirection(alert);
+        if (direction && !directions.includes(direction)) {
+          directions.push(direction);
+        }
+      }
+      return directions;
+    }
+
+    function getAlertDirection(alert) {
+      const type = String(alert && alert.type || '');
+      if ([
+        'movingAverageBelow',
+        'intradayHighPullback',
+        'bearishMovingAverage',
+        'macdDeathCross',
+        'volumeDrop',
+        'lowBreak',
+        'rsiWeak',
+        'bollingerBelow'
+      ].includes(type)) {
+        return 'down';
+      }
+      if (type === 'reboundLowVolume') {
+        return 'up';
+      }
+
+      const key = String(alert && alert.key || '');
+      if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:/.test(key)) {
+        return 'up';
+      }
+      if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:/.test(key)) {
+        return 'down';
+      }
+
+      const label = String(alert && alert.label || '');
+      if (/上涨|涨幅|反弹|>=/.test(label)) {
+        return 'up';
+      }
+      if (/下跌|跌破|回落|走弱|死叉|<=/.test(label)) {
+        return 'down';
+      }
+      return '';
+    }
+
+    function renderAlertDirectionBadge(direction, title, label) {
+      const up = direction === 'up';
+      return '<svg class="alert-badge-direction alert-badge-direction-' + direction + '" title="' + title + '" aria-label="' + label + '" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M8 ' + (up ? '13.25V3.75' : '2.75V12.25') + '" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"></path>' +
+        '<path d="' + (up ? 'M4.75 7L8 3.75L11.25 7' : 'M4.75 9L8 12.25L11.25 9') + '" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '</svg>';
     }
 
     function renderEditableNumber(quote, field, digits, step = 'any') {
