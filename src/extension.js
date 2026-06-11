@@ -127,6 +127,8 @@ function activate(context) {
       monitor.updateCollapsedGroups(message.collapsedGroups);
       monitor.updateEditingState(message.editing);
       monitor.webviewReady();
+    } else if (message.command === 'viewStateChanged') {
+      monitor.updateViewState(message.viewState);
     } else if (message.command === 'webviewError') {
       monitor.logError('Webview error', {
         message: message.message || '',
@@ -405,9 +407,38 @@ class MarketMonitor {
     }
   }
 
-  webviewReady() {
+  async webviewReady() {
     this.logInfo('Webview ready');
+    await this.restoreViewStateFromDatabase('webviewReady');
     this.reloadConfiguration('webviewReady');
+  }
+
+  async restoreViewStateFromDatabase(reason) {
+    const rawState = await this.database.readViewState();
+    if (!rawState || Object.keys(rawState).length === 0) {
+      return;
+    }
+
+    const storedState = sanitizeViewState(rawState);
+    if (storedState.collapsedGroups) {
+      this.collapsedGroups = normalizeCollapsedGroups(storedState.collapsedGroups);
+    }
+    this.provider.postViewState(storedState);
+    this.logInfo('View state restored from SQLite', {
+      reason,
+      collapsedGroups: Object.keys(this.collapsedGroups || {}).length,
+      selectedIndexCode: storedState.selectedIndexCode || '',
+      tableSortGroups: storedState.tableSort ? Object.keys(storedState.tableSort).length : 0,
+      columnWidths: storedState.columnWidths ? Object.keys(storedState.columnWidths).length : 0
+    });
+  }
+
+  updateViewState(viewState) {
+    const normalizedState = sanitizeViewState(viewState);
+    if (normalizedState.collapsedGroups) {
+      this.collapsedGroups = normalizeCollapsedGroups(normalizedState.collapsedGroups);
+    }
+    this.database.writeViewState(normalizedState);
   }
 
   updateCollapsedGroups(collapsedGroups) {
@@ -984,10 +1015,27 @@ class MarketMonitor {
         updatedAt: this.lastUpdatedAt
       });
     } catch (error) {
-      this.lastError = getErrorMessage(error);
-      this.logError('Refresh failed', {
-        error: this.lastError
-      });
+      const message = getErrorMessage(error);
+      const storedSnapshot = await this.database.readQuoteSnapshot(quoteSymbols);
+      if (storedSnapshot.quotes.length > 0) {
+        this.groupStatsQuotes = mergeQuoteUpdates(storedSnapshot.quotes, this.groupStatsQuotes, quoteSymbols);
+        this.lastQuotes = applyMinuteLevelQuoteChanges(mergeQuoteUpdates(storedSnapshot.quotes, this.lastQuotes, quoteSymbols), this.minuteQuoteState);
+        this.lastUpdatedAt = storedSnapshot.updatedAt || this.lastUpdatedAt;
+        this.lastUpdatedDate = storedSnapshot.updatedDate || this.lastUpdatedDate;
+        await this.evaluateCurrentAlerts('sqliteFallback');
+        this.lastError = `Refresh failed; using SQLite snapshot: ${message}`;
+        this.logWarn('Refresh fell back to SQLite snapshot', {
+          error: message,
+          quotes: storedSnapshot.quotes.length,
+          updatedDate: storedSnapshot.updatedDate || '',
+          updatedAt: storedSnapshot.updatedAt || ''
+        });
+      } else {
+        this.lastError = message;
+        this.logError('Refresh failed', {
+          error: this.lastError
+        });
+      }
     } finally {
       this.isRefreshing = false;
       this.updateViews(getMarketPhase().name);
@@ -1292,6 +1340,15 @@ class QuotesViewProvider {
         type: 'aiResult',
         requestId,
         result
+      });
+    }
+  }
+
+  postViewState(viewState) {
+    if (this.view) {
+      this.view.webview.postMessage({
+        type: 'viewState',
+        viewState
       });
     }
   }
@@ -2775,6 +2832,8 @@ class QuotesViewProvider {
         aiLoading = false;
         aiResult = event.data.result || {};
         renderAiPanel(latestSnapshot);
+      } else if (event.data && event.data.type === 'viewState') {
+        applyPersistedViewState(event.data.viewState);
       }
     });
 
@@ -3767,6 +3826,36 @@ class QuotesViewProvider {
         lastFlashedUpdatedAt
       };
       vscode.setState(viewState);
+      vscode.postMessage({
+        command: 'viewStateChanged',
+        viewState
+      });
+    }
+
+    function applyPersistedViewState(nextState) {
+      if (!nextState || typeof nextState !== 'object') {
+        return;
+      }
+
+      viewState = {
+        ...viewState,
+        ...nextState
+      };
+      selectedIndexCode = viewState.selectedIndexCode || selectedIndexCode;
+      editingGroups = viewState.editingGroups || {};
+      collapsedGroups = viewState.collapsedGroups || {};
+      addingGroups = viewState.addingGroups || {};
+      aiOpen = Boolean(viewState.aiOpen);
+      aiPrompt = viewState.aiPrompt || '';
+      tableSort = viewState.tableSort || {};
+      columnWidths = viewState.columnWidths || {};
+      lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
+      vscode.setState(viewState);
+      syncCollapsedGroups();
+      syncEditingState(true);
+      if (latestSnapshot) {
+        render(latestSnapshot);
+      }
     }
 
     function syncCollapsedGroups() {
@@ -6308,6 +6397,85 @@ function normalizeCollapsedGroups(value) {
       groups[groupName] = true;
     }
     return groups;
+  }, {});
+}
+
+function sanitizeViewState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  const state = {};
+  const selectedIndexCode = sanitizeSelectedIndexCode(value.selectedIndexCode);
+  if (selectedIndexCode) {
+    state.selectedIndexCode = selectedIndexCode;
+  }
+
+  state.editingGroups = sanitizeBooleanMap(value.editingGroups);
+  state.collapsedGroups = normalizeCollapsedGroups(value.collapsedGroups);
+  state.addingGroups = sanitizeBooleanMap(value.addingGroups);
+  state.aiOpen = Boolean(value.aiOpen);
+  state.aiPrompt = String(value.aiPrompt || '').slice(0, 5000);
+  state.tableSort = sanitizeTableSortState(value.tableSort);
+  state.columnWidths = sanitizeColumnWidths(value.columnWidths);
+  state.lastFlashedUpdatedAt = typeof value.lastFlashedUpdatedAt === 'string' ? value.lastFlashedUpdatedAt.slice(0, 64) : '';
+  return state;
+}
+
+function sanitizeSelectedIndexCode(value) {
+  const code = normalizeCode(String(value || ''));
+  return INDEX_SYMBOLS.some((symbol) => symbol.code === code) ? code : '';
+}
+
+function sanitizeBooleanMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value).reduce((items, [key, enabled]) => {
+    const name = String(key || '').trim();
+    if (name && enabled) {
+      items[name] = true;
+    }
+    return items;
+  }, {});
+}
+
+function sanitizeTableSortState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  const allowedColumns = new Set(AVAILABLE_QUOTE_COLUMNS);
+  return Object.entries(value).reduce((items, [group, sort]) => {
+    const groupName = String(group || '').trim();
+    if (!groupName || !sort || typeof sort !== 'object') {
+      return items;
+    }
+    const column = String(sort.column || '');
+    const direction = sort.direction === 'desc' ? 'desc' : 'asc';
+    if (allowedColumns.has(column)) {
+      items[groupName] = { column, direction };
+    }
+    return items;
+  }, {});
+}
+
+function sanitizeColumnWidths(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  const allowedColumns = new Set(AVAILABLE_QUOTE_COLUMNS);
+  return Object.entries(value).reduce((items, [column, width]) => {
+    if (!allowedColumns.has(column)) {
+      return items;
+    }
+    const parsed = Math.trunc(Number(width));
+    if (Number.isFinite(parsed) && parsed >= 20 && parsed <= 600) {
+      items[column] = parsed;
+    }
+    return items;
   }, {});
 }
 

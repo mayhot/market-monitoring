@@ -366,6 +366,46 @@ class MarketDatabase {
     }, 'writeAlertNotificationCache');
   }
 
+  async readViewState() {
+    return this.enqueueRead((db) => {
+      const rows = selectRows(db, `
+        SELECT value_json
+        FROM view_state
+        WHERE state_key = 'quotesView'
+        LIMIT 1
+      `);
+      if (rows.length === 0 || !rows[0].value_json) {
+        return {};
+      }
+      try {
+        const parsed = JSON.parse(rows[0].value_json);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }, 'readViewState', {});
+  }
+
+  async writeViewState(state) {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) {
+      return;
+    }
+
+    return this.enqueueWrite(async (db) => {
+      db.run(`
+        INSERT INTO view_state (state_key, value_json, updated_at)
+        VALUES ($stateKey, $valueJson, $updatedAt)
+        ON CONFLICT(state_key) DO UPDATE SET
+          value_json = excluded.value_json,
+          updated_at = excluded.updated_at
+      `, {
+        $stateKey: 'quotesView',
+        $valueJson: JSON.stringify(state),
+        $updatedAt: new Date().toISOString()
+      });
+    }, 'writeViewState');
+  }
+
   async upsertDailyKlineBarsBatch(bars, operation) {
     if (!Array.isArray(bars) || bars.length === 0) {
       return;
@@ -479,7 +519,7 @@ class MarketDatabase {
 
   initializeSchema(db) {
     db.exec(`
-      PRAGMA user_version = 1;
+      PRAGMA user_version = 2;
 
       CREATE TABLE IF NOT EXISTS monitored_symbols (
         code TEXT PRIMARY KEY,
@@ -550,6 +590,12 @@ class MarketDatabase {
         code TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (notify_date, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS view_state (
+        state_key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
     `);
     this.ensureColumn(db, 'monitored_symbols', 'active', 'INTEGER NOT NULL DEFAULT 1');
