@@ -1958,7 +1958,7 @@ class QuotesViewProvider {
       border: 1px solid currentColor;
       border-radius: 999px;
       box-sizing: border-box;
-      color: var(--vscode-notificationsWarningIcon-foreground, var(--up));
+      color: var(--vscode-notificationsWarningIcon-foreground, #d29922);
       font-size: 9px;
       font-weight: 700;
       line-height: 1;
@@ -1968,17 +1968,23 @@ class QuotesViewProvider {
     }
 
     .alert-badge-level-5 {
-      color: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, var(--up)) 70%, var(--vscode-foreground) 30%);
+      color: color-mix(in srgb, #d29922 68%, var(--vscode-foreground) 32%);
     }
 
     .alert-badge-level-10 {
-      color: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, var(--up)) 82%, var(--vscode-foreground) 18%);
+      color: color-mix(in srgb, #e67e22 76%, var(--vscode-foreground) 24%);
     }
 
-    .alert-badge-level-20,
-    .alert-badge-level-60,
+    .alert-badge-level-20 {
+      color: color-mix(in srgb, #e5534b 84%, var(--vscode-foreground) 16%);
+    }
+
+    .alert-badge-level-60 {
+      color: color-mix(in srgb, #d1242f 92%, var(--vscode-foreground) 8%);
+    }
+
     .alert-badge-generic {
-      color: color-mix(in srgb, var(--down) 76%, var(--vscode-foreground) 24%);
+      color: var(--vscode-notificationsWarningIcon-foreground, #d29922);
     }
 
     .alert-badge-direction {

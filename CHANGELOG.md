@@ -8,6 +8,13 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.8] - 2026-06-11
+
+### Changed
+
+- Bumped the extension version from `0.2.7` to `0.2.8`.
+- Changed moving-average alert badge colors to an independent severity scale for 5, 10, 20, and 60 day alerts.
+
 ## [0.2.7] - 2026-06-11
 
 ### Changed
