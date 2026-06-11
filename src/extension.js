@@ -25,6 +25,9 @@ const DEFAULT_BOLLINGER_STD_DEV = 2;
 const DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT = 2;
 const DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS = 3;
 const DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS = 5;
+const DEFAULT_MINUTE_TREND_CONFIRM_MINUTES = 3;
+const DEFAULT_MINUTE_TREND_SLOPE_POINTS = 5;
+const DEFAULT_MINUTE_TREND_EPSILON_PERCENT = 0.03;
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -278,6 +281,7 @@ class MarketMonitor {
     this.context.subscriptions.push(this.statusBarItem);
     this.running = false;
     const cachedSnapshot = readCachedQuoteSnapshot(this.context.globalState);
+    this.minuteQuoteState = new Map();
     this.lastQuotes = cachedSnapshot.quotes;
     this.groupStatsQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
@@ -376,7 +380,7 @@ class MarketMonitor {
     const storedSnapshot = await this.database.readQuoteSnapshot(quoteSymbols);
     if (storedSnapshot.quotes.length > 0 && (!this.lastUpdatedDate || storedSnapshot.updatedDate >= this.lastUpdatedDate)) {
       this.groupStatsQuotes = mergeQuoteUpdates(storedSnapshot.quotes, this.groupStatsQuotes, quoteSymbols);
-      this.lastQuotes = mergeQuoteUpdates(storedSnapshot.quotes, this.lastQuotes, quoteSymbols);
+      this.lastQuotes = applyMinuteLevelQuoteChanges(mergeQuoteUpdates(storedSnapshot.quotes, this.lastQuotes, quoteSymbols), this.minuteQuoteState);
       this.lastUpdatedAt = storedSnapshot.updatedAt || this.lastUpdatedAt;
       this.lastUpdatedDate = storedSnapshot.updatedDate || this.lastUpdatedDate;
       this.logInfo('Quote snapshot restored from SQLite', {
@@ -963,7 +967,7 @@ class MarketMonitor {
         return;
       }
       const realtimeCodes = new Set(realtimeQuoteSymbols.map((symbol) => symbol.code));
-      this.lastQuotes = mergeQuoteUpdates(fetchedQuotes.filter((quote) => realtimeCodes.has(quote.code)), this.lastQuotes, quoteSymbols);
+      this.lastQuotes = applyMinuteLevelQuoteChanges(mergeQuoteUpdates(fetchedQuotes.filter((quote) => realtimeCodes.has(quote.code)), this.lastQuotes, quoteSymbols), this.minuteQuoteState);
       this.groupStatsQuotes = mergeQuoteUpdates(fetchedQuotes, this.groupStatsQuotes, quoteSymbols);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
@@ -1079,7 +1083,7 @@ class MarketMonitor {
       return;
     }
 
-    const pricedQuotes = snapshot.groups.flatMap((group) => group.items).filter((quote) => quote.changePercent !== null);
+    const pricedQuotes = snapshot.groups.flatMap((group) => group.items).filter((quote) => Number.isFinite(getQuoteDisplayChangePercent(quote)));
     const head = pricedQuotes.slice(0, 3);
     const alertCount = snapshot.alerts.length;
 
@@ -1099,8 +1103,8 @@ class MarketMonitor {
       return;
     }
 
-    const average = head.reduce((sum, quote) => sum + quote.changePercent, 0) / head.length;
-    const summary = head.map((quote) => `${quote.name} ${formatPercent(quote.changePercent)}`).join(' ');
+    const average = head.reduce((sum, quote) => sum + getQuoteDisplayChangePercent(quote), 0) / head.length;
+    const summary = head.map((quote) => `${quote.name} ${formatPercent(getQuoteDisplayChangePercent(quote))}`).join(' ');
     this.statusBarItem.text = alertCount > 0 ? `$(warning) ${alertCount} ${summary}` : `$(graph-line) ${summary}`;
     this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
     this.statusBarItem.color = snapshot.colors.mode === 'none'
@@ -1222,6 +1226,8 @@ class QuotesViewProvider {
         previousClose: null,
         change: null,
         changePercent: null,
+        minuteChange: null,
+        minuteChangePercent: null,
         time: '',
         status: '等待刷新'
       })),
@@ -3216,6 +3222,8 @@ class QuotesViewProvider {
             previousClose: null,
             change: null,
             changePercent: null,
+            minuteChange: null,
+            minuteChangePercent: null,
             time: '',
             status: ''
           }))
@@ -3393,7 +3401,8 @@ class QuotesViewProvider {
     }
 
     function renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, itemCount) {
-      const trend = quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat';
+      const displayChangePercent = getQuoteDisplayChangePercent(quote);
+      const trend = displayChangePercent > 0 ? 'up' : displayChangePercent < 0 ? 'down' : 'flat';
       const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
       const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
       const highlightClass = getQuoteHighlightClass(quote, snapshot);
@@ -3413,7 +3422,7 @@ class QuotesViewProvider {
     }
 
     function getQuoteHighlightClass(quote, snapshot) {
-      const changePercent = Number(quote.changePercent);
+      const changePercent = Number(getQuoteDisplayChangePercent(quote));
       if (!Number.isFinite(changePercent)) {
         return '';
       }
@@ -3453,10 +3462,12 @@ class QuotesViewProvider {
         return '<div class="' + cellClass + ' price">' + (quote.price === null ? '--' : formatDecimal(quote.price, digits)) + '</div>';
       }
       if (column === 'changePercent') {
-        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (quote.changePercent === null ? '--' : formatSigned(quote.changePercent, 2) + '%') + '</div>';
+        const changePercent = getQuoteDisplayChangePercent(quote);
+        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (changePercent === null ? '--' : formatSigned(changePercent, 2) + '%') + '</div>';
       }
       if (column === 'change') {
-        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (quote.change === null ? '--' : formatSignedDecimal(quote.change, digits)) + '</div>';
+        const change = getQuoteDisplayChange(quote);
+        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (change === null ? '--' : formatSignedDecimal(change, digits)) + '</div>';
       }
       if (column === 'cost') {
         return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'cost', 3) : renderReadonlyNumber(quote.cost, 3)) + '</div>';
@@ -3709,10 +3720,10 @@ class QuotesViewProvider {
         return quote.price;
       }
       if (column === 'changePercent') {
-        return quote.changePercent;
+        return getQuoteDisplayChangePercent(quote);
       }
       if (column === 'change') {
-        return quote.change;
+        return getQuoteDisplayChange(quote);
       }
       if (column === 'cost') {
         return quote.cost;
@@ -3727,6 +3738,20 @@ class QuotesViewProvider {
         return calculateNetProfit(quote);
       }
       return null;
+    }
+
+    function getQuoteDisplayChange(quote) {
+      if (Number.isFinite(quote && quote.minuteChange)) {
+        return quote.minuteChange;
+      }
+      return quote && quote.change !== undefined ? quote.change : null;
+    }
+
+    function getQuoteDisplayChangePercent(quote) {
+      if (Number.isFinite(quote && quote.minuteChangePercent)) {
+        return quote.minuteChangePercent;
+      }
+      return quote && quote.changePercent !== undefined ? quote.changePercent : null;
     }
 
     function persistViewState() {
@@ -4892,6 +4917,8 @@ async function fetchQuotes(symbols, timeoutMs, log, database) {
         previousClose: null,
         change: null,
         changePercent: null,
+        minuteChange: null,
+        minuteChangePercent: null,
         time: '',
         status: '无报价'
       };
@@ -6368,6 +6395,148 @@ function mergeQuoteUpdates(quotes, previousQuotes, symbols) {
   return ordered;
 }
 
+function applyMinuteLevelQuoteChanges(quotes, stateMap) {
+  return quotes.map((quote) => applyMinuteLevelQuoteChange(quote, stateMap));
+}
+
+function applyMinuteLevelQuoteChange(quote, stateMap) {
+  if (!isUsableQuote(quote) || !Number.isFinite(quote.price)) {
+    return {
+      ...quote,
+      minuteChange: null,
+      minuteChangePercent: null,
+      minuteTrendSlope: null,
+      minuteTrendConfirmed: false
+    };
+  }
+
+  const state = updateMinuteQuoteState(stateMap, quote);
+  const baseline = Number.isFinite(state.previousMinuteClose) && state.previousMinuteClose > 0
+    ? state.previousMinuteClose
+    : state.minuteOpen;
+  const rawMinuteChange = Number.isFinite(baseline) && baseline > 0 ? quote.price - baseline : null;
+  const rawMinuteChangePercent = rawMinuteChange !== null ? (rawMinuteChange / baseline) * 100 : null;
+  updateConfirmedMinuteDisplay(state, rawMinuteChange, rawMinuteChangePercent);
+
+  return {
+    ...quote,
+    minuteChange: state.displayChange,
+    minuteChangePercent: state.displayChangePercent,
+    rawMinuteChange,
+    rawMinuteChangePercent,
+    minuteTrendSlope: state.lastSlope,
+    minuteTrendConfirmed: Boolean(state.confirmedDirection)
+  };
+}
+
+function updateMinuteQuoteState(stateMap, quote) {
+  const fallbackState = {
+    minuteKey: '',
+    minuteOpen: quote.price,
+    latestPrice: quote.price,
+    previousMinuteClose: null,
+    minuteCloses: [],
+    confirmTicks: 0,
+    pendingDirection: 'flat',
+    confirmedDirection: '',
+    lastConfirmedMinuteKey: '',
+    lastSlope: null,
+    displayChange: null,
+    displayChangePercent: null
+  };
+  if (!stateMap || !quote || !quote.code) {
+    return fallbackState;
+  }
+
+  const minuteKey = getQuoteMinuteKey(quote);
+  const state = stateMap.get(quote.code) || fallbackState;
+  if (state.minuteKey && state.minuteKey !== minuteKey && Number.isFinite(state.latestPrice)) {
+    state.previousMinuteClose = state.latestPrice;
+    state.minuteCloses = [...(state.minuteCloses || []), state.latestPrice].slice(-20);
+    state.minuteOpen = quote.price;
+  } else if (!state.minuteKey || !Number.isFinite(state.minuteOpen)) {
+    state.minuteOpen = quote.price;
+  }
+
+  state.minuteKey = minuteKey;
+  state.latestPrice = quote.price;
+  const slopeSamples = [...(state.minuteCloses || []), quote.price];
+  state.lastSlope = calculatePriceSlope(slopeSamples, DEFAULT_MINUTE_TREND_SLOPE_POINTS);
+  stateMap.set(quote.code, state);
+  return state;
+}
+
+function updateConfirmedMinuteDisplay(state, rawMinuteChange, rawMinuteChangePercent) {
+  const direction = getMinuteTrendDirection(rawMinuteChangePercent, state.lastSlope);
+  if (state.lastConfirmedMinuteKey !== state.minuteKey) {
+    if (direction === 'flat') {
+      state.pendingDirection = 'flat';
+      state.confirmTicks = 0;
+    } else if (state.pendingDirection === direction) {
+      state.confirmTicks += 1;
+    } else {
+      state.pendingDirection = direction;
+      state.confirmTicks = 1;
+    }
+    state.lastConfirmedMinuteKey = state.minuteKey;
+  }
+
+  if (direction !== 'flat' && state.pendingDirection === direction && state.confirmTicks >= DEFAULT_MINUTE_TREND_CONFIRM_MINUTES) {
+    state.confirmedDirection = direction;
+  }
+
+  if (direction === 'flat') {
+    state.displayChange = 0;
+    state.displayChangePercent = 0;
+    return;
+  }
+  if (state.confirmedDirection === direction) {
+    state.displayChange = rawMinuteChange;
+    state.displayChangePercent = rawMinuteChangePercent;
+    return;
+  }
+  if (state.displayChange === null || state.displayChangePercent === null) {
+    state.displayChange = 0;
+    state.displayChangePercent = 0;
+  }
+}
+
+function getMinuteTrendDirection(changePercent, slope) {
+  if (!Number.isFinite(changePercent) || Math.abs(changePercent) < DEFAULT_MINUTE_TREND_EPSILON_PERCENT || slope === null) {
+    return 'flat';
+  }
+  if (changePercent > 0 && slope > 0) {
+    return 'up';
+  }
+  if (changePercent < 0 && slope < 0) {
+    return 'down';
+  }
+  return 'flat';
+}
+
+function getQuoteMinuteKey(quote) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(quote && quote.time ? quote.time : ''));
+  if (match) {
+    return `${getShanghaiDateString()} ${match[1].padStart(2, '0')}:${match[2]}`;
+  }
+  const now = getShanghaiTimeParts();
+  return `${getShanghaiDateString()} ${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`;
+}
+
+function getQuoteDisplayChange(quote) {
+  if (Number.isFinite(quote && quote.minuteChange)) {
+    return quote.minuteChange;
+  }
+  return quote && quote.change !== undefined ? quote.change : null;
+}
+
+function getQuoteDisplayChangePercent(quote) {
+  if (Number.isFinite(quote && quote.minuteChangePercent)) {
+    return quote.minuteChangePercent;
+  }
+  return quote && quote.changePercent !== undefined ? quote.changePercent : null;
+}
+
 function mergeQuoteWithPrevious(quote, previous) {
   if (isUsableQuote(quote) || !isUsableQuote(previous)) {
     return quote;
@@ -6412,6 +6581,8 @@ function buildIndexQuotes(quotes) {
       previousClose: null,
       change: null,
       changePercent: null,
+      minuteChange: null,
+      minuteChangePercent: null,
       time: '',
       status: '等待刷新'
     };
@@ -6452,6 +6623,8 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
       previousClose: null,
       change: null,
       changePercent: null,
+      minuteChange: null,
+      minuteChangePercent: null,
       time: '',
       status: '等待刷新'
     };
@@ -7078,7 +7251,7 @@ function compareQuote(left, right, sortBy) {
 }
 
 function numericSortValue(quote, sortBy) {
-  const value = sortBy === 'price' ? quote.price : quote.changePercent;
+  const value = sortBy === 'price' ? quote.price : getQuoteDisplayChangePercent(quote);
   return value === null ? Number.NEGATIVE_INFINITY : value;
 }
 
