@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { pinyin } = require('pinyin-pro');
 const vscode = require('vscode');
+const { MarketDatabase } = require('./database');
 
 const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
@@ -77,6 +78,7 @@ function activate(context) {
 
   context.subscriptions.push(
     output,
+    monitor.database,
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.commands.registerCommand('marketMonitoring.refresh', () => monitor.refresh(true)),
     vscode.commands.registerCommand('marketMonitoring.importCsv', () => monitor.importCsv()),
@@ -268,6 +270,7 @@ class MarketMonitor {
     this.context = context;
     this.provider = provider;
     this.output = output;
+    this.database = new MarketDatabase(context, output);
     this.timer = undefined;
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
     this.statusBarItem.command = 'marketMonitoring.refresh';
@@ -297,6 +300,8 @@ class MarketMonitor {
     this.configureRefreshPauseDepth = 0;
     this.pendingRefreshAfterPause = false;
     this.config = readConfig();
+    this.persistConfiguredSymbols('activation');
+    this.databaseRestorePromise = this.restoreCachedDataFromDatabase('activation');
     this.logInfo('Activated', {
       extensionId: getExtensionId(context),
       symbols: this.config.symbols.length,
@@ -332,6 +337,8 @@ class MarketMonitor {
 
   reloadConfiguration(reason = 'configurationChanged') {
     this.config = readConfig();
+    this.persistConfiguredSymbols(reason);
+    this.databaseRestorePromise = this.restoreCachedDataFromDatabase(reason);
     this.lastAlertEvaluationKey = '';
     this.lastRefreshSkipKey = '';
     this.logInfo('Configuration reloaded', {
@@ -352,6 +359,45 @@ class MarketMonitor {
     }
     this.schedule();
     this.refresh(false);
+  }
+
+  persistConfiguredSymbols(reason) {
+    this.database.upsertSymbols(this.config.symbols).then(() => {
+      this.logInfo('Configured symbols persisted', {
+        reason,
+        symbols: this.config.symbols.length
+      });
+    });
+  }
+
+  async restoreCachedDataFromDatabase(reason) {
+    const quoteSymbols = mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS);
+    const storedSnapshot = await this.database.readQuoteSnapshot(quoteSymbols);
+    if (storedSnapshot.quotes.length > 0 && (!this.lastUpdatedDate || storedSnapshot.updatedDate >= this.lastUpdatedDate)) {
+      this.groupStatsQuotes = mergeQuoteUpdates(storedSnapshot.quotes, this.groupStatsQuotes, quoteSymbols);
+      this.lastQuotes = mergeQuoteUpdates(storedSnapshot.quotes, this.lastQuotes, quoteSymbols);
+      this.lastUpdatedAt = storedSnapshot.updatedAt || this.lastUpdatedAt;
+      this.lastUpdatedDate = storedSnapshot.updatedDate || this.lastUpdatedDate;
+      this.logInfo('Quote snapshot restored from SQLite', {
+        reason,
+        quotes: storedSnapshot.quotes.length,
+        updatedDate: this.lastUpdatedDate || '',
+        updatedAt: this.lastUpdatedAt || ''
+      });
+      this.updateViews(getMarketPhase().name);
+    }
+
+    const today = getShanghaiDateString();
+    const alertNotificationCache = await this.database.readAlertNotificationCache(today);
+    if (alertNotificationCache.date === today && alertNotificationCache.codes.length > 0) {
+      this.notifiedAlertDate = today;
+      this.notifiedAlertCodes = new Set(alertNotificationCache.codes);
+      this.logInfo('Alert notification cache restored from SQLite', {
+        reason,
+        date: today,
+        codes: alertNotificationCache.codes.length
+      });
+    }
   }
 
   webviewReady() {
@@ -505,7 +551,7 @@ class MarketMonitor {
     }
 
     try {
-      const results = await fetchSymbolSearchResults(keyword, this.config.requestTimeoutMs);
+      const results = await fetchSymbolSearchResults(keyword, this.config.requestTimeoutMs, this.database);
       this.provider.postSymbolSearchResults(requestId, keyword, results);
     } catch (error) {
       const message = getErrorMessage(error);
@@ -575,7 +621,7 @@ class MarketMonitor {
         cancellable: false
       }, async () => {
         const plan = await createAiManagementPlan(naturalLanguagePrompt, this.config, this.output);
-        return applyAiManagementPlan(plan, this.config, this.output);
+        return applyAiManagementPlan(plan, this.config, this.output, this.database);
       });
 
       if (result.changed) {
@@ -759,7 +805,7 @@ class MarketMonitor {
         location: vscode.ProgressLocation.Notification,
         title: '正在导入 CSV 标的',
         cancellable: false
-      }, (progress) => resolveImportRows(rows, this.config, this.output, progress));
+      }, (progress) => resolveImportRows(rows, this.config, this.output, progress, this.database));
 
       if (importResult.symbols.length === 0) {
         vscode.window.showWarningMessage(`未导入标的：有效 ${importResult.validated} 条，跳过 ${importResult.skipped} 条`);
@@ -820,6 +866,10 @@ class MarketMonitor {
   }
 
   async refresh(force) {
+    if (this.databaseRestorePromise) {
+      await this.databaseRestorePromise;
+    }
+
     if (!this.running || this.isRefreshing || this.isRefreshPaused()) {
       const paused = this.isRefreshPaused();
       if (paused && this.running) {
@@ -919,6 +969,7 @@ class MarketMonitor {
       await this.evaluateCurrentAlerts('refresh');
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
+      await this.persistQuoteSnapshotToDatabase();
       this.logInfo('Refresh succeeded', {
         quotes: this.lastQuotes.length,
         groupStatsQuotes: this.groupStatsQuotes.length,
@@ -937,6 +988,14 @@ class MarketMonitor {
       this.updateViews(getMarketPhase().name);
       this.schedule();
     }
+  }
+
+  async persistQuoteSnapshotToDatabase() {
+    const configuredCodes = new Set(this.config.symbols.map((symbol) => symbol.code));
+    const configuredQuotes = this.groupStatsQuotes.filter((quote) => configuredCodes.has(quote.code));
+    await this.database.upsertSymbols(this.config.symbols);
+    await this.database.upsertQuoteSnapshot(this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
+    await this.database.upsertQuoteDailyBars(configuredQuotes, this.lastUpdatedDate);
   }
 
   shouldEvaluateCurrentAlertSnapshot() {
@@ -973,7 +1032,7 @@ class MarketMonitor {
 
     this.activeAlertEvaluationKey = evaluationKey;
     this.alertEvaluationPromise = (async () => {
-      this.triggeredAlerts = await evaluateAlerts(this.groupStatsQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, (message, details) => this.logInfo(message, details));
+      this.triggeredAlerts = await evaluateAlerts(this.groupStatsQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, this.database, (message, details) => this.logInfo(message, details));
       this.lastAlertEvaluationKey = evaluationKey;
       this.logInfo('Alerts evaluated', {
         reason,
@@ -1084,6 +1143,7 @@ class MarketMonitor {
       this.notifiedAlertCodes.add(code);
     }
     await writeAlertNotificationCache(this.context.globalState, this.notifiedAlertDate, Array.from(this.notifiedAlertCodes));
+    await this.database.writeAlertNotificationCache(this.notifiedAlertDate, Array.from(this.notifiedAlertCodes));
 
     const visibleAlerts = eligibleAlerts.slice(0, 3);
     for (const alert of visibleAlerts) {
@@ -3943,7 +4003,7 @@ async function createAiManagementPlan(prompt, config, output) {
   };
 }
 
-async function applyAiManagementPlan(plan, config, output) {
+async function applyAiManagementPlan(plan, config, output, database) {
   appendLog(output, 'INFO', 'AI plan application started', {
     requestedActions: Array.isArray(plan.actions) ? plan.actions.length : 0,
     currentGroups: config.groups.length,
@@ -4026,7 +4086,7 @@ async function applyAiManagementPlan(plan, config, output) {
     }
 
     if (action.type === 'addSymbol') {
-      const symbol = await resolveAiSymbol(action, config, warnings, output);
+      const symbol = await resolveAiSymbol(action, config, warnings, output, database);
       if (!symbol) {
         appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolResolveFailed', action: sanitizeAiActionForLog(action) });
         continue;
@@ -4149,12 +4209,12 @@ function normalizeAiAction(action) {
   return allowed.has(type) ? { ...action, type } : undefined;
 }
 
-async function resolveAiSymbol(action, config, warnings, output) {
+async function resolveAiSymbol(action, config, warnings, output, database) {
   const code = normalizeCode(String(action.code || ''));
   const group = normalizeGroupName(action.group || action.targetGroup || action.newGroup) || DEFAULT_GROUP;
   if (code) {
     appendLog(output, 'INFO', 'AI symbol resolved by code', { code, group });
-    const name = String(action.name || '').trim() || await findSymbolNameByCode(code, config.requestTimeoutMs) || code;
+    const name = String(action.name || '').trim() || await findSymbolNameByCode(code, config.requestTimeoutMs, database) || code;
     return {
       code,
       name,
@@ -4173,7 +4233,7 @@ async function resolveAiSymbol(action, config, warnings, output) {
 
   const startedAt = Date.now();
   appendLog(output, 'INFO', 'AI symbol search started', { keyword: name, timeoutMs: config.requestTimeoutMs });
-  const results = await fetchSymbolSearchResults(name, config.requestTimeoutMs).catch((error) => {
+  const results = await fetchSymbolSearchResults(name, config.requestTimeoutMs, database).catch((error) => {
     warnings.push(`搜索标的失败：${name}，${getErrorMessage(error)}`);
     appendLog(output, 'WARN', 'AI symbol search failed', {
       keyword: name,
@@ -4707,11 +4767,29 @@ function hasDailyKlineAlertIndicator(indicators) {
   );
 }
 
-async function fetchQuotes(symbols, timeoutMs, log) {
+async function fetchQuotes(symbols, timeoutMs, log, database) {
   const uniqueCodes = Array.from(new Set(symbols.map((symbol) => symbol.code)));
+  if (database && uniqueCodes.length > 0) {
+    const storedSnapshot = await database.readQuoteSnapshot(symbols);
+    const storedByCode = new Map(storedSnapshot.quotes.map((quote) => [quote.code, quote]));
+    if (uniqueCodes.every((code) => isUsableQuote(storedByCode.get(code)))) {
+      if (log) {
+        log('Quotes restored from SQLite', {
+          requested: uniqueCodes.length,
+          updatedDate: storedSnapshot.updatedDate || '',
+          updatedAt: storedSnapshot.updatedAt || ''
+        });
+      }
+      return symbols.map((symbol) => ({
+        ...symbol,
+        ...storedByCode.get(symbol.code)
+      }));
+    }
+  }
+
   const rawQuotes = await fetchRawQuotesConcurrent(uniqueCodes, timeoutMs, log);
 
-  return symbols.map((symbol) => {
+  const quotes = symbols.map((symbol) => {
     const raw = rawQuotes.get(symbol.code);
     if (!raw) {
       return {
@@ -4730,6 +4808,12 @@ async function fetchQuotes(symbols, timeoutMs, log) {
       ...raw
     };
   });
+
+  if (database) {
+    await database.upsertQuoteSnapshot(quotes, new Date().toLocaleTimeString('zh-CN', { hour12: false }), getShanghaiDateString());
+  }
+
+  return quotes;
 }
 
 async function fetchRawQuotes(codes, timeoutMs, log) {
@@ -4913,10 +4997,17 @@ async function fetchProviderQuotes(provider, query, timeoutMs) {
   }
 }
 
-async function fetchSymbolSearchResults(keyword, timeoutMs) {
+async function fetchSymbolSearchResults(keyword, timeoutMs, database) {
   const normalizedKeyword = String(keyword || '').trim();
   if (!normalizedKeyword) {
     return [];
+  }
+
+  if (database) {
+    const storedResults = await database.readSymbolSearchResults(normalizedKeyword);
+    if (storedResults.length > 0) {
+      return storedResults;
+    }
   }
 
   const url = `http://suggest3.sinajs.cn/suggest/type=&key=${encodeURIComponent(normalizedKeyword)}`;
@@ -4928,9 +5019,16 @@ async function fetchSymbolSearchResults(keyword, timeoutMs) {
 
   if (results.length === 0) {
     const code = normalizeCode(normalizedKeyword);
-    return code ? [{ code, name: code, market: getCodeMarketLabel(code) }] : [];
+    const fallbackResults = code ? [{ code, name: code, market: getCodeMarketLabel(code) }] : [];
+    if (database && fallbackResults.length > 0) {
+      await database.upsertSymbolSearchResults(normalizedKeyword, fallbackResults);
+    }
+    return fallbackResults;
   }
 
+  if (database) {
+    await database.upsertSymbolSearchResults(normalizedKeyword, results);
+  }
   return results;
 }
 
@@ -5065,15 +5163,15 @@ function normalizeCachedQuote(value) {
   };
 }
 
-async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, intradayTrendState, log) {
+async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, intradayTrendState, database, log) {
   if (!rules || rules.length === 0) {
     return [];
   }
 
   const alerts = [];
   const quotesByCode = new Map(quotes.map((quote) => [quote.code, quote]));
-  const technicalSnapshots = await fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log);
-  const movingAverageSnapshots = await fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log);
+  const technicalSnapshots = await fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, database, log);
+  const movingAverageSnapshots = await fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, database, log);
 
   for (const rule of rules) {
     const quote = quotesByCode.get(rule.code);
@@ -5143,7 +5241,7 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
   });
 }
 
-async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log) {
+async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, database, log) {
   const snapshots = new Map();
   const tasks = [];
   const requested = new Set();
@@ -5164,7 +5262,7 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
       continue;
     }
     requested.add(key);
-    tasks.push(() => fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache)
+    tasks.push(() => fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache, database)
       .then((snapshot) => {
         if (snapshot && snapshot.error) {
           failures.push(snapshot);
@@ -5186,9 +5284,9 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
   return snapshots;
 }
 
-async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache) {
+async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache, database) {
   try {
-    const bars = await fetchDailyKlineBars(quote.code, days + 10, timeoutMs, dailyKlineCache);
+    const bars = await fetchDailyKlineBars(quote.code, days + 10, timeoutMs, dailyKlineCache, database);
     const today = getShanghaiDateString();
     const previousCloses = bars
       .filter((bar) => bar.date !== today)
@@ -5228,7 +5326,7 @@ async function runLimited(tasks, limit) {
   await Promise.all(workers);
 }
 
-async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
+async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache, database) {
   const secid = toEastmoneySecid(code);
   if (!secid) {
     return [];
@@ -5241,6 +5339,16 @@ async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
     const cachedBars = dailyKlineCache.get(cacheKey);
     if (Array.isArray(cachedBars) && cachedBars.length >= normalizedLimit) {
       return cachedBars.slice(-normalizedLimit);
+    }
+  }
+
+  if (database) {
+    const storedBars = await database.readDailyKlineBars(code, normalizedLimit);
+    if (Array.isArray(storedBars) && storedBars.length >= normalizedLimit) {
+      if (dailyKlineCache) {
+        dailyKlineCache.set(cacheKey, storedBars);
+      }
+      return storedBars.slice(-normalizedLimit);
     }
   }
 
@@ -5257,6 +5365,9 @@ async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache) {
   const parsed = JSON.parse(body);
   const klines = parsed && parsed.data && Array.isArray(parsed.data.klines) ? parsed.data.klines : [];
   const bars = klines.map(parseEastmoneyKline).filter(Boolean);
+  if (database) {
+    await database.upsertDailyKlineBars(code, bars);
+  }
 
   if (dailyKlineCache) {
     dailyKlineCache.set(cacheKey, bars);
@@ -5272,10 +5383,11 @@ function parseEastmoneyKline(row) {
   const high = optionalNumber(fields[3]);
   const low = optionalNumber(fields[4]);
   const volume = optionalNumber(fields[5]);
+  const amount = optionalNumber(fields[6]);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || close === null) {
     return null;
   }
-  return { date, open, close, high, low, volume };
+  return { date, open, close, high, low, volume, amount };
 }
 
 function toEastmoneySecid(code) {
@@ -5315,7 +5427,7 @@ function getMovingAverageSnapshotKey(code, days) {
   return `${code}:${days}`;
 }
 
-async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, log) {
+async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, database, log) {
   const snapshots = new Map();
   const tasks = [];
   const limitsByCode = new Map();
@@ -5335,7 +5447,7 @@ async function fetchAlertTechnicalSnapshots(rules, quotesByCode, timeoutMs, dail
   }
 
   for (const [code, limit] of limitsByCode.entries()) {
-    tasks.push(() => fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache)
+    tasks.push(() => fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache, database)
       .then((bars) => snapshots.set(code, bars))
       .catch((error) => {
         snapshots.set(code, []);
@@ -6287,7 +6399,7 @@ function parseCsvImportRows(text) {
   }));
 }
 
-async function resolveImportRows(rows, config, output, progress) {
+async function resolveImportRows(rows, config, output, progress, database) {
   const existingCodes = new Set(config.symbols.map((symbol) => symbol.code));
   const importedCodes = new Set();
   const groups = [];
@@ -6308,7 +6420,7 @@ async function resolveImportRows(rows, config, output, progress) {
       continue;
     }
 
-    const resolved = await resolveImportedSymbol(parsed.value, config.requestTimeoutMs);
+    const resolved = await resolveImportedSymbol(parsed.value, config.requestTimeoutMs, database);
     if (!resolved) {
       skipped += 1;
       output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: 标的无效或没有真实行情`);
@@ -6373,15 +6485,15 @@ function parseImportRow(row) {
   };
 }
 
-async function resolveImportedSymbol(row, timeoutMs) {
+async function resolveImportedSymbol(row, timeoutMs, database) {
   const code = normalizeCode(row.code);
   if (code) {
-    const quote = await fetchSingleUsableQuote({ code, name: row.name || code, group: row.group }, timeoutMs);
+    const quote = await fetchSingleUsableQuote({ code, name: row.name || code, group: row.group }, timeoutMs, database);
     if (!quote) {
       return undefined;
     }
 
-    const searchName = await findSymbolNameByCode(code, timeoutMs);
+    const searchName = await findSymbolNameByCode(code, timeoutMs, database);
     return {
       code,
       name: searchName || row.name || code
@@ -6392,7 +6504,7 @@ async function resolveImportedSymbol(row, timeoutMs) {
     return undefined;
   }
 
-  const results = await fetchSymbolSearchResults(row.name, timeoutMs).catch(() => []);
+  const results = await fetchSymbolSearchResults(row.name, timeoutMs, database).catch(() => []);
   const candidates = results.slice(0, 6).map((item) => ({
     code: item.code,
     name: item.name,
@@ -6402,7 +6514,7 @@ async function resolveImportedSymbol(row, timeoutMs) {
     return undefined;
   }
 
-  const quotes = await fetchQuotes(candidates, timeoutMs).catch(() => []);
+  const quotes = await fetchQuotes(candidates, timeoutMs, undefined, database).catch(() => []);
   const usable = quotes.find((quote) => isUsableQuote(quote));
   if (!usable) {
     return undefined;
@@ -6415,14 +6527,14 @@ async function resolveImportedSymbol(row, timeoutMs) {
   };
 }
 
-async function fetchSingleUsableQuote(symbol, timeoutMs) {
-  const quotes = await fetchQuotes([symbol], timeoutMs).catch(() => []);
+async function fetchSingleUsableQuote(symbol, timeoutMs, database) {
+  const quotes = await fetchQuotes([symbol], timeoutMs, undefined, database).catch(() => []);
   const quote = quotes[0];
   return isUsableQuote(quote) ? quote : undefined;
 }
 
-async function findSymbolNameByCode(code, timeoutMs) {
-  const results = await fetchSymbolSearchResults(code, timeoutMs).catch(() => []);
+async function findSymbolNameByCode(code, timeoutMs, database) {
+  const results = await fetchSymbolSearchResults(code, timeoutMs, database).catch(() => []);
   const matched = results.find((item) => item.code === code);
   return matched ? matched.name : '';
 }
