@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.9] - 2026-06-11
+
+### Changed
+
+- Bumped the extension version from `0.2.8` to `0.2.9`.
+- Changed quote rows to display minute-level change values while keeping group title rise/fall counts on the intraday previous-close basis.
+
+### Fixed
+
+- Prevented one-off minute price jumps from immediately flipping quote row rise/fall direction by requiring same-direction minute slope confirmation.
+
 ## [0.2.8] - 2026-06-11
 
 ### Changed
