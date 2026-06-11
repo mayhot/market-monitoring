@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.7] - 2026-06-11
+
+### Changed
+
+- Bumped the extension version from `0.2.6` to `0.2.7`.
+
+### Fixed
+
+- Allowed alert badges and rising/falling direction badges to display together in quote rows.
+
 ## [0.2.6] - 2026-06-09
 
 ### Changed
