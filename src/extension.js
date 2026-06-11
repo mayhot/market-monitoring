@@ -14,6 +14,7 @@ const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const DEFAULT_MOVING_AVERAGE_DAYS = 20;
+const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60];
 const MAX_MOVING_AVERAGE_DAYS = 250;
 const DEFAULT_BEARISH_MA_DAYS = { short: 5, mid: 20, long: 60 };
 const DEFAULT_VOLUME_AVERAGE_DAYS = 5;
@@ -1949,51 +1950,35 @@ class QuotesViewProvider {
       align-items: center;
       justify-content: center;
       position: relative;
-      top: 0;
-      width: 10px;
-      height: 8px;
+      top: -1px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 3px;
       margin-left: 4px;
       border: 1px solid currentColor;
-      border-radius: 5px 5px 2px 2px;
+      border-radius: 999px;
+      box-sizing: border-box;
       color: var(--vscode-notificationsWarningIcon-foreground, var(--up));
+      font-size: 9px;
+      font-weight: 700;
       line-height: 1;
+      letter-spacing: 0;
       vertical-align: middle;
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+      background: color-mix(in srgb, currentColor 10%, transparent);
     }
 
-    .alert-badge::before {
-      content: '';
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 3px;
-      height: 2px;
-      border-radius: 2px;
-      background: currentColor;
-      opacity: 0.75;
+    .alert-badge-level-5 {
+      color: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, var(--up)) 70%, var(--vscode-foreground) 30%);
     }
 
-    .alert-badge::after {
-      content: '';
-      position: absolute;
-      right: -1px;
-      bottom: -2px;
-      left: -1px;
-      height: 1px;
-      border-radius: 2px;
-      background: currentColor;
-      opacity: 0.85;
+    .alert-badge-level-10 {
+      color: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, var(--up)) 82%, var(--vscode-foreground) 18%);
     }
 
-    .alert-badge-pullback {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      margin-left: 4px;
-      color: color-mix(in srgb, var(--down) 72%, var(--vscode-foreground) 28%);
-      overflow: visible;
-      vertical-align: -2.5px;
-      opacity: 0.82;
+    .alert-badge-level-20,
+    .alert-badge-level-60,
+    .alert-badge-generic {
+      color: color-mix(in srgb, var(--down) 76%, var(--vscode-foreground) 24%);
     }
 
     .code,
@@ -3472,13 +3457,17 @@ class QuotesViewProvider {
       }
       const title = escapeHtml(alertText);
       const label = escapeHtml(t('alert'));
-      if (alerts.some((alert) => alert && alert.type === 'intradayHighPullback')) {
-        return '<svg class="alert-badge-pullback" title="' + title + '" aria-label="' + label + '" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">' +
-          '<path d="M8 2.75V12.25" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"></path>' +
-          '<path d="M4.75 9L8 12.25L11.25 9" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"></path>' +
-        '</svg>';
-      }
-      return '<span class="alert-badge" title="' + title + '" aria-label="' + label + '"></span>';
+      const movingAverageDays = getMaxMovingAverageAlertDays(alerts);
+      const badgeText = movingAverageDays === null ? '!' : String(movingAverageDays);
+      const levelClass = movingAverageDays === null ? ' alert-badge-generic' : ' alert-badge-level-' + movingAverageDays;
+      return '<span class="alert-badge' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(badgeText) + '</span>';
+    }
+
+    function getMaxMovingAverageAlertDays(alerts) {
+      const days = alerts
+        .map((alert) => Number(alert && alert.movingAverageDays))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      return days.length > 0 ? Math.max(...days) : null;
     }
 
     function renderEditableNumber(quote, field, digits, step = 'any') {
@@ -4535,6 +4524,7 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       name: symbol.name || '',
       movingAverageBelow: true,
       movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
+      movingAverageDaysList: DEFAULT_MOVING_AVERAGE_ALERT_DAYS,
       intradayHighPullback: true,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
@@ -4597,7 +4587,11 @@ function normalizeAlertRule(item) {
     changePercentBelow: optionalNumber(item.changePercentBelow)
   };
   const movingAverageBelow = item.movingAverageBelow !== false || item.movingAverageBelowDays !== undefined;
-  const movingAverageDays = sanitizeMovingAverageDays(item.movingAverageDays !== undefined ? item.movingAverageDays : item.movingAverageBelowDays);
+  const movingAverageDaysValue = item.movingAverageDays !== undefined ? item.movingAverageDays : item.movingAverageBelowDays;
+  const movingAverageDaysList = sanitizeMovingAverageDaysList(movingAverageDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS);
+  const movingAverageDays = movingAverageDaysList.includes(DEFAULT_MOVING_AVERAGE_DAYS)
+    ? DEFAULT_MOVING_AVERAGE_DAYS
+    : movingAverageDaysList[0];
   const technicalIndicators = {
     bearishMovingAverage: item.bearishMovingAverage === true,
     bearishMovingAverageShortDays: sanitizeMovingAverageDays(item.bearishMovingAverageShortDays || DEFAULT_BEARISH_MA_DAYS.short),
@@ -4637,6 +4631,7 @@ function normalizeAlertRule(item) {
     name: String(item.name || '').trim(),
     movingAverageBelow,
     movingAverageDays,
+    movingAverageDaysList,
     ...technicalIndicators,
     ...thresholds
   };
@@ -4720,6 +4715,20 @@ function sanitizeMovingAverageDays(value) {
     return DEFAULT_MOVING_AVERAGE_DAYS;
   }
   return Math.min(MAX_MOVING_AVERAGE_DAYS, Math.max(1, parsed));
+}
+
+function sanitizeMovingAverageDaysList(value, fallback = [DEFAULT_MOVING_AVERAGE_DAYS]) {
+  const source = Array.isArray(value)
+    ? value
+    : value === undefined || value === null || value === ''
+      ? fallback
+      : [value];
+  const days = source
+    .map(optionalInteger)
+    .filter((parsed) => parsed !== null)
+    .map((parsed) => Math.min(MAX_MOVING_AVERAGE_DAYS, Math.max(1, parsed)));
+  const uniqueDays = [...new Set(days)].sort((left, right) => left - right);
+  return uniqueDays.length > 0 ? uniqueDays : [...fallback];
 }
 
 function sanitizeIntradayConfirmTicks(value) {
@@ -5203,7 +5212,7 @@ function summarizeAlertRules(rules) {
       continue;
     }
     if (rule.movingAverageBelow) {
-      summary.movingAverageBelow += 1;
+      summary.movingAverageBelow += getRuleMovingAverageDays(rule).length;
     }
     if (rule.intradayHighPullback) {
       summary.intradayHighPullback += 1;
@@ -5244,7 +5253,7 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
 async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, dailyKlineCache, database, log) {
   const snapshots = new Map();
   const tasks = [];
-  const requested = new Set();
+  const daysByCode = new Map();
   const failures = [];
 
   for (const rule of rules) {
@@ -5257,19 +5266,27 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
       continue;
     }
 
-    const key = getMovingAverageSnapshotKey(rule.code, rule.movingAverageDays);
-    if (requested.has(key)) {
-      continue;
+    if (!daysByCode.has(rule.code)) {
+      daysByCode.set(rule.code, new Set());
     }
-    requested.add(key);
-    tasks.push(() => fetchMovingAverageSnapshot(quote, rule.movingAverageDays, timeoutMs, dailyKlineCache, database)
-      .then((snapshot) => {
-        if (snapshot && snapshot.error) {
-          failures.push(snapshot);
-          return;
-        }
-        if (snapshot) {
-          snapshots.set(key, snapshot);
+    for (const days of getRuleMovingAverageDays(rule)) {
+      daysByCode.get(rule.code).add(days);
+    }
+  }
+
+  for (const [code, daysSet] of daysByCode.entries()) {
+    const quote = quotesByCode.get(code);
+    const daysList = [...daysSet].sort((left, right) => left - right);
+    tasks.push(() => fetchMovingAverageSnapshots(quote, daysList, timeoutMs, dailyKlineCache, database)
+      .then((items) => {
+        for (const snapshot of items) {
+          if (snapshot && snapshot.error) {
+            failures.push(snapshot);
+            continue;
+          }
+          if (snapshot) {
+            snapshots.set(getMovingAverageSnapshotKey(snapshot.code, snapshot.days), snapshot);
+          }
         }
       }));
   }
@@ -5284,35 +5301,63 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
   return snapshots;
 }
 
-async function fetchMovingAverageSnapshot(quote, days, timeoutMs, dailyKlineCache, database) {
+async function fetchMovingAverageSnapshots(quote, daysList, timeoutMs, dailyKlineCache, database) {
+  const maxDays = Math.max(...daysList);
   try {
-    const bars = await fetchDailyKlineBars(quote.code, days + 10, timeoutMs, dailyKlineCache, database);
-    const today = getShanghaiDateString();
-    const previousCloses = bars
-      .filter((bar) => bar.date !== today)
-      .map((bar) => bar.close)
-      .filter((close) => Number.isFinite(close))
-      .slice(-(days - 1));
-
-    if (previousCloses.length < days - 1 || !Number.isFinite(quote.price)) {
-      return null;
+    if (database) {
+      try {
+        const storedBars = await database.readDailyKlineBars(quote.code, maxDays);
+        const storedSnapshots = calculateMovingAverageSnapshots(quote, storedBars, daysList);
+        if (hasMovingAverageSnapshotsForAllDays(storedSnapshots, daysList)) {
+          return storedSnapshots;
+        }
+      } catch {
+        // Fall through to the network path when local storage is temporarily unavailable.
+      }
     }
 
-    const closes = [...previousCloses, quote.price];
-    const average = closes.reduce((sum, close) => sum + close, 0) / closes.length;
-    return {
-      code: quote.code,
-      days,
-      average,
-      samples: closes.length
-    };
+    const bars = await fetchDailyKlineBars(quote.code, maxDays + 10, timeoutMs, dailyKlineCache, database);
+    return calculateMovingAverageSnapshots(quote, bars, daysList);
   } catch (error) {
-    return {
+    return [{
       code: quote.code,
-      days,
+      days: maxDays,
       error: getErrorMessage(error)
-    };
+    }];
   }
+}
+
+function calculateMovingAverageSnapshots(quote, bars, daysList) {
+  return daysList
+    .map((days) => calculateMovingAverageSnapshot(quote, bars, days))
+    .filter(Boolean);
+}
+
+function hasMovingAverageSnapshotsForAllDays(snapshots, daysList) {
+  const availableDays = new Set(snapshots.map((snapshot) => snapshot.days));
+  return daysList.every((days) => availableDays.has(days));
+}
+
+function calculateMovingAverageSnapshot(quote, bars, days) {
+  const today = getShanghaiDateString();
+  const previousCloses = bars
+    .filter((bar) => bar.date !== today)
+    .map((bar) => bar.close)
+    .filter((close) => Number.isFinite(close))
+    .slice(-(days - 1));
+
+  if (previousCloses.length < days - 1 || !Number.isFinite(quote.price)) {
+    return null;
+  }
+
+  const closes = [...previousCloses, quote.price];
+  const average = closes.reduce((sum, close) => sum + close, 0) / closes.length;
+  return {
+    code: quote.code,
+    days,
+    average,
+    samples: closes.length
+  };
 }
 
 async function runLimited(tasks, limit) {
@@ -5405,22 +5450,36 @@ function addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAver
     return;
   }
 
-  const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, rule.movingAverageDays));
-  if (!snapshot || !Number.isFinite(snapshot.average) || quote.price >= snapshot.average) {
-    return;
+  for (const days of getRuleMovingAverageDays(rule)) {
+    const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, days));
+    if (!snapshot || !Number.isFinite(snapshot.average) || quote.price >= snapshot.average) {
+      continue;
+    }
+
+    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
+    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const alertLabel = `跌破${snapshot.days}日线 ${formattedAverage}`;
+
+    alerts.push({
+      key: `${quote.code}:movingAverageBelow:${snapshot.days}:${formattedAverage}`,
+      type: 'movingAverageBelow',
+      movingAverageDays: snapshot.days,
+      code: quote.code,
+      name: displayName,
+      label: alertLabel,
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+    });
   }
+}
 
-  const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-  const formattedValue = quote.price.toFixed(priceDecimalPlaces);
-  const alertLabel = `跌破${snapshot.days}日线 ${formattedAverage}`;
-
-  alerts.push({
-    key: `${quote.code}:movingAverageBelow:${snapshot.days}:${formattedAverage}`,
-    code: quote.code,
-    name: displayName,
-    label: alertLabel,
-    message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
-  });
+function getRuleMovingAverageDays(rule) {
+  if (!rule || !rule.movingAverageBelow) {
+    return [];
+  }
+  if (Array.isArray(rule.movingAverageDaysList) && rule.movingAverageDaysList.length > 0) {
+    return rule.movingAverageDaysList;
+  }
+  return [sanitizeMovingAverageDays(rule.movingAverageDays)];
 }
 
 function getMovingAverageSnapshotKey(code, days) {
