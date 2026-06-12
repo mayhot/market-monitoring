@@ -3800,16 +3800,10 @@ class QuotesViewProvider {
     }
 
     function getQuoteDisplayChange(quote) {
-      if (Number.isFinite(quote && quote.minuteChange)) {
-        return quote.minuteChange;
-      }
       return quote && quote.change !== undefined ? quote.change : null;
     }
 
     function getQuoteDisplayChangePercent(quote) {
-      if (Number.isFinite(quote && quote.minuteChangePercent)) {
-        return quote.minuteChangePercent;
-      }
       return quote && quote.changePercent !== undefined ? quote.changePercent : null;
     }
 
@@ -6692,16 +6686,10 @@ function getQuoteMinuteKey(quote) {
 }
 
 function getQuoteDisplayChange(quote) {
-  if (Number.isFinite(quote && quote.minuteChange)) {
-    return quote.minuteChange;
-  }
   return quote && quote.change !== undefined ? quote.change : null;
 }
 
 function getQuoteDisplayChangePercent(quote) {
-  if (Number.isFinite(quote && quote.minuteChangePercent)) {
-    return quote.minuteChangePercent;
-  }
   return quote && quote.changePercent !== undefined ? quote.changePercent : null;
 }
 
@@ -6779,8 +6767,10 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
     }
 
     const quote = quoteByCode.get(symbol.code);
-    const item = quote ? {
-      ...quote,
+    const statsQuote = statsQuoteByCode.get(symbol.code);
+    const displayQuote = quote && statsQuote ? mergeQuoteDisplayFields(quote, statsQuote) : quote || statsQuote;
+    const item = displayQuote ? {
+      ...displayQuote,
       name: symbol.name,
       group: symbol.group,
       cost: symbol.cost,
@@ -6826,6 +6816,24 @@ function getGroupStatsItems(items, statsQuoteByCode) {
       changePercent: statsQuote.changePercent
     };
   });
+}
+
+function mergeQuoteDisplayFields(quote, statsQuote) {
+  return {
+    ...quote,
+    price: statsQuote.price,
+    open: statsQuote.open,
+    high: statsQuote.high,
+    low: statsQuote.low,
+    previousClose: statsQuote.previousClose,
+    change: statsQuote.change,
+    changePercent: statsQuote.changePercent,
+    volume: statsQuote.volume,
+    amount: statsQuote.amount,
+    intradayVwap: statsQuote.intradayVwap,
+    time: statsQuote.time,
+    status: statsQuote.status
+  };
 }
 
 function decodeCsvImportText(bytes) {
