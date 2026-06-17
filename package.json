@@ -488,7 +488,7 @@
               "movingAverageBelow": {
                 "type": "boolean",
                 "default": true,
-                "description": "Trigger when latest price is less than the configured N-day moving average windows. Enabled by default for each alert rule; set false to disable."
+                "description": "Trigger an intraday break-below alert when the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Enabled by default for each alert rule; set false to disable."
               },
               "movingAverageDays": {
                 "oneOf": [
@@ -514,7 +514,7 @@
                   60,
                   120
                 ],
-                "description": "Moving average window or windows used by movingAverageBelow, movingAverageAbove, and movingAverageHoldAbove when their specific day fields are not set. Defaults to 5, 10, 20, 60, and 120."
+                "description": "Moving average window or windows used by movingAverageBelow, movingAverageHoldBelow, movingAverageAbove, and movingAverageHoldAbove when their specific day fields are not set. Defaults to 5, 10, 20, 60, and 120."
               },
               "movingAverageBelowDays": {
                 "oneOf": [
@@ -534,6 +534,37 @@
                   }
                 ],
                 "description": "Compatibility shorthand: setting this also enables movingAverageBelow."
+              },
+              "movingAverageHoldBelow": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger a close-confirmed lost-support alert after market close when the previous close was greater than or equal to the previous N-day moving average and the latest closing price is less than the current N-day moving average. Disabled by default; set true to enable."
+              },
+              "movingAverageHoldBelowDays": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 250
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 250
+                    }
+                  }
+                ],
+                "default": [
+                  5,
+                  10,
+                  20,
+                  60,
+                  120
+                ],
+                "description": "Moving average window or windows used by movingAverageHoldBelow. Setting this also enables movingAverageHoldBelow."
               },
               "movingAverageAbove": {
                 "type": "boolean",

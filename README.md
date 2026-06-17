@@ -101,7 +101,9 @@
     {
       "code": "sh600519",
       "name": "MA example",
-      "movingAverageDays": [5, 10, 20, 60, 120]
+      "movingAverageDays": [5, 10, 20, 60, 120],
+      "movingAverageHoldBelow": true,
+      "movingAverageHoldBelowDays": [5, 10, 20, 60, 120]
     },
     {
       "code": "sh601318",
@@ -139,7 +141,9 @@
 }
 ```
 
-When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
+When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
+
+Set `movingAverageHoldBelow: true` for close-confirmed "失守 N 日线" alerts using the same cross-down condition after market close. This downside confirmation alert is disabled by default; use `movingAverageHoldBelowDays` to choose its windows.
 
 Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when the previous close was below the previous N-day moving average and the latest price is greater than or equal to the current N-day moving average. Set `movingAverageHoldAbove: true` for close-confirmed "站稳 N 日线" alerts using the same cross-up condition after market close. These upside moving-average alerts are disabled by default; use `movingAverageAboveDays` or `movingAverageHoldAboveDays` to choose their windows. If downside and upside moving-average alerts are both active for a symbol, the panel shows separate green downside and red upside badges.
 
