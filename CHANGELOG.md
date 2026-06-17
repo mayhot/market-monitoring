@@ -8,6 +8,13 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## Unreleased
+
+### Changed
+
+- Allow the same symbol to be added to multiple groups while still preventing duplicates inside the same group.
+- Updated the SQLite monitored symbol cache to key configured symbols by code and group.
+
 ## [0.2.11] - 2026-06-12
 
 ### Changed

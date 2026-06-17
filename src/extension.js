@@ -565,9 +565,9 @@ class MarketMonitor {
       return;
     }
 
-    const exists = this.config.symbols.some((item) => item.code === normalized.code);
+    const exists = hasSymbolInGroup(this.config.symbols, normalized.code, normalized.group);
     if (exists) {
-      vscode.window.showInformationMessage(`${normalized.name} 已在监控列表中`);
+      vscode.window.showInformationMessage(`${normalized.name} 已在 ${normalized.group} 分组中`);
       return;
     }
 
@@ -4060,6 +4060,17 @@ function normalizeGroupName(value) {
   return String(value || '').trim();
 }
 
+function symbolGroupKey(code, group) {
+  const normalizedCode = normalizeCode(String(code || ''));
+  const normalizedGroup = normalizeGroupName(group) || DEFAULT_GROUP;
+  return normalizedCode ? `${normalizedCode}\u0000${normalizedGroup}` : '';
+}
+
+function hasSymbolInGroup(symbols, code, group) {
+  const key = symbolGroupKey(code, group);
+  return Boolean(key) && (symbols || []).some((symbol) => symbolGroupKey(symbol && symbol.code, symbol && symbol.group) === key);
+}
+
 async function updateConfiguredSymbols(symbols) {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   await config.update('symbols', symbols.map(toConfigSymbol), getConfigTarget(config, 'symbols'));
@@ -4132,7 +4143,7 @@ async function createAiManagementPlan(prompt, config, output) {
     '你必须只返回 JSON，不要 Markdown，不要解释。',
     '根据用户自然语言，把需求转换为 actions 数组。',
     '可用 action.type：addGroup, renameGroup, removeGroup, addSymbol, removeSymbol, moveSymbol, renameSymbol, updateSymbol。',
-    '字段约定：group/name/newName/oldName/code/cost/holding/moveSymbolsTo。',
+    '字段约定：group/name/newName/oldName/oldGroup/sourceGroup/fromGroup/code/cost/holding/moveSymbolsTo。',
     'addSymbol 可以只给 name，扩展会搜索匹配标的；如果用户给了股票代码，必须放到 code。',
     'removeGroup 默认把组内标的移动到 moveSymbolsTo；没有指定时可以省略。',
     '不要编造不存在于当前列表中的旧标的代码；不确定时优先用 name。',
@@ -4278,12 +4289,12 @@ async function applyAiManagementPlan(plan, config, output, database) {
         appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'builtInIndex', symbol });
         continue;
       }
-      if (nextSymbols.some((item) => item.code === symbol.code)) {
-        warnings.push(`标的已存在，跳过：${symbol.name} (${symbol.code})`);
-        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolExists', symbol });
+      const group = ensureGroup(symbol.group || action.group || DEFAULT_GROUP);
+      if (hasSymbolInGroup(nextSymbols, symbol.code, group)) {
+        warnings.push(`标的已存在于 ${group} 分组，跳过：${symbol.name} (${symbol.code})`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'symbolExistsInGroup', symbol, group });
         continue;
       }
-      const group = ensureGroup(symbol.group || action.group || DEFAULT_GROUP);
       const insertIndex = findGroupInsertIndex(nextSymbols, group);
       nextSymbols.splice(insertIndex, 0, { ...symbol, group });
       changes.push(`新增标的：${symbol.name} (${symbol.code}) -> ${group}`);
@@ -4448,6 +4459,13 @@ async function resolveAiSymbol(action, config, warnings, output, database) {
 function findAiSymbolIndex(symbols, action) {
   const code = normalizeCode(String(action.code || ''));
   if (code) {
+    const group = normalizeGroupName(action.oldGroup || action.sourceGroup || action.fromGroup);
+    if (group) {
+      const groupIndex = symbols.findIndex((symbol) => symbolGroupKey(symbol.code, symbol.group) === symbolGroupKey(code, group));
+      if (groupIndex >= 0) {
+        return groupIndex;
+      }
+    }
     return symbols.findIndex((symbol) => symbol.code === code);
   }
 
@@ -6893,8 +6911,8 @@ function parseCsvImportRows(text) {
 }
 
 async function resolveImportRows(rows, config, output, progress, database) {
-  const existingCodes = new Set(config.symbols.map((symbol) => symbol.code));
-  const importedCodes = new Set();
+  const existingSymbolGroups = new Set(config.symbols.map((symbol) => symbolGroupKey(symbol.code, symbol.group)).filter(Boolean));
+  const importedSymbolGroups = new Set();
   const groups = [];
   const symbols = [];
   let validated = 0;
@@ -6921,13 +6939,14 @@ async function resolveImportRows(rows, config, output, progress, database) {
     }
 
     validated += 1;
-    if (existingCodes.has(resolved.code) || importedCodes.has(resolved.code)) {
+    const symbolGroup = symbolGroupKey(resolved.code, parsed.value.group);
+    if (existingSymbolGroups.has(symbolGroup) || importedSymbolGroups.has(symbolGroup)) {
       skipped += 1;
-      output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: ${resolved.code} 已存在`);
+      output.appendLine(`[${new Date().toISOString()}] CSV 第 ${row.line} 行跳过: ${resolved.code} 已存在于 ${parsed.value.group} 分组`);
       continue;
     }
 
-    importedCodes.add(resolved.code);
+    importedSymbolGroups.add(symbolGroup);
     if (!groups.includes(parsed.value.group)) {
       groups.push(parsed.value.group);
     }

@@ -25,11 +25,10 @@ class MarketDatabase {
         ) VALUES (
           $code, $name, $market, $exchange, $groupName, $cost, $holding, $source, $active, $createdAt, $updatedAt
         )
-        ON CONFLICT(code) DO UPDATE SET
+        ON CONFLICT(code, group_name) DO UPDATE SET
           name = excluded.name,
           market = excluded.market,
           exchange = excluded.exchange,
-          group_name = excluded.group_name,
           cost = excluded.cost,
           holding = excluded.holding,
           source = excluded.source,
@@ -522,17 +521,18 @@ class MarketDatabase {
       PRAGMA user_version = 2;
 
       CREATE TABLE IF NOT EXISTS monitored_symbols (
-        code TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
         name TEXT NOT NULL,
         market TEXT,
         exchange TEXT,
-        group_name TEXT,
+        group_name TEXT NOT NULL DEFAULT '',
         cost REAL,
         holding REAL,
         source TEXT NOT NULL DEFAULT 'configured',
         active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (code, group_name)
       );
 
       CREATE TABLE IF NOT EXISTS daily_kline (
@@ -546,8 +546,7 @@ class MarketDatabase {
         amount REAL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        PRIMARY KEY (code, trade_date),
-        FOREIGN KEY (code) REFERENCES monitored_symbols(code) ON DELETE CASCADE
+        PRIMARY KEY (code, trade_date)
       );
 
       CREATE INDEX IF NOT EXISTS idx_daily_kline_trade_date ON daily_kline(trade_date);
@@ -598,7 +597,96 @@ class MarketDatabase {
         updated_at TEXT NOT NULL
       );
     `);
+    this.migrateDailyKlineSchema(db);
+    this.migrateMonitoredSymbolsSchema(db);
     this.ensureColumn(db, 'monitored_symbols', 'active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  migrateDailyKlineSchema(db) {
+    const rows = selectRows(db, `
+      SELECT sql
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'daily_kline'
+      LIMIT 1
+    `);
+    const createSql = rows.length > 0 ? String(rows[0].sql || '') : '';
+    if (!/FOREIGN\s+KEY/i.test(createSql)) {
+      return;
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS daily_kline_v2 (
+        code TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        open REAL,
+        close REAL,
+        high REAL,
+        low REAL,
+        volume REAL,
+        amount REAL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (code, trade_date)
+      );
+
+      INSERT OR REPLACE INTO daily_kline_v2 (
+        code, trade_date, open, close, high, low, volume, amount, created_at, updated_at
+      )
+      SELECT code, trade_date, open, close, high, low, volume, amount, created_at, updated_at
+      FROM daily_kline;
+
+      DROP TABLE daily_kline;
+      ALTER TABLE daily_kline_v2 RENAME TO daily_kline;
+      CREATE INDEX IF NOT EXISTS idx_daily_kline_trade_date ON daily_kline(trade_date);
+    `);
+  }
+
+  migrateMonitoredSymbolsSchema(db) {
+    const result = db.exec('PRAGMA table_info(monitored_symbols)');
+    const rows = result.length > 0 ? result[0].values : [];
+    const codeColumn = rows.find((row) => row[1] === 'code');
+    const groupColumn = rows.find((row) => row[1] === 'group_name');
+    const hasCompositePrimaryKey = codeColumn && groupColumn && codeColumn[5] === 1 && groupColumn[5] === 2;
+    if (hasCompositePrimaryKey) {
+      return;
+    }
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS monitored_symbols_v2 (
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        market TEXT,
+        exchange TEXT,
+        group_name TEXT NOT NULL DEFAULT '',
+        cost REAL,
+        holding REAL,
+        source TEXT NOT NULL DEFAULT 'configured',
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (code, group_name)
+      );
+
+      INSERT OR REPLACE INTO monitored_symbols_v2 (
+        code, name, market, exchange, group_name, cost, holding, source, active, created_at, updated_at
+      )
+      SELECT
+        code,
+        name,
+        market,
+        exchange,
+        COALESCE(group_name, ''),
+        cost,
+        holding,
+        source,
+        active,
+        created_at,
+        updated_at
+      FROM monitored_symbols;
+
+      DROP TABLE monitored_symbols;
+      ALTER TABLE monitored_symbols_v2 RENAME TO monitored_symbols;
+    `);
   }
 
   ensureColumn(db, tableName, columnName, definition) {
