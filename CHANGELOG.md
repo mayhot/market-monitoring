@@ -8,12 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
-## [Unreleased]
+## [0.2.13] - 2026-06-17
 
 ### Added
 
-- Changed `movingAverageBelow` to use intraday "跌破 N 日线" cross-down checks, and added `movingAverageHoldBelow` alerts for close-confirmed "失守 N 日线" checks.
+- Added `movingAverageHoldBelow` alerts for close-confirmed "失守 N 日线" checks.
 - Added explicit `movingAverageAbove` alerts for intraday "站上 N 日线" cross-up checks and `movingAverageHoldAbove` alerts for close-confirmed "站稳 N 日线" checks, both with separate red moving-average badges.
+
+### Changed
+
+- Bumped the extension version from `0.2.12` to `0.2.13`.
+- Changed `movingAverageBelow` to use intraday "跌破 N 日线" cross-down checks.
 
 ## [0.2.12] - 2026-06-15
 
