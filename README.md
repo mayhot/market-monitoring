@@ -104,6 +104,15 @@
       "movingAverageDays": [5, 10, 20, 60, 120]
     },
     {
+      "code": "sh601318",
+      "name": "MA support example",
+      "movingAverageBelow": false,
+      "movingAverageAbove": true,
+      "movingAverageAboveDays": [5, 10, 20, 60, 120],
+      "movingAverageHoldAbove": true,
+      "movingAverageHoldAboveDays": [5, 10, 20, 60, 120]
+    },
+    {
       "code": "sz000001",
       "name": "trend risk example",
       "bearishMovingAverage": true,
@@ -131,6 +140,8 @@
 ```
 
 When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
+
+Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when the previous close was below the previous N-day moving average and the latest price is greater than or equal to the current N-day moving average. Set `movingAverageHoldAbove: true` for close-confirmed "站稳 N 日线" alerts using the same cross-up condition after market close. These upside moving-average alerts are disabled by default; use `movingAverageAboveDays` or `movingAverageHoldAboveDays` to choose their windows. If downside and upside moving-average alerts are both active for a symbol, the panel shows separate green downside and red upside badges.
 
 `intradayHighPullback` 会在标的当日最高价高于开盘价、当前涨跌幅转为负值，且从当日最高点回落幅度超过 `intradayHighPullbackPercent` 时触发。盘中会结合实时分时 VWAP（可用时）、最近刷新价格斜率和 `intradayDowntrendConfirmTicks` 连续确认来判断分时下跌趋势；收盘后会按当日日 K 收盘价继续展示预警。
 

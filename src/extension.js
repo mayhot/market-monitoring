@@ -2050,6 +2050,26 @@ class QuotesViewProvider {
       color: color-mix(in srgb, #0f5f36 96%, var(--vscode-foreground) 4%);
     }
 
+    .alert-badge-above-level-5 {
+      color: color-mix(in srgb, #ff8a80 68%, var(--vscode-foreground) 32%);
+    }
+
+    .alert-badge-above-level-10 {
+      color: color-mix(in srgb, #ff6659 76%, var(--vscode-foreground) 24%);
+    }
+
+    .alert-badge-above-level-20 {
+      color: color-mix(in srgb, #ef5350 84%, var(--vscode-foreground) 16%);
+    }
+
+    .alert-badge-above-level-60 {
+      color: color-mix(in srgb, #d32f2f 92%, var(--vscode-foreground) 8%);
+    }
+
+    .alert-badge-above-level-120 {
+      color: color-mix(in srgb, #b71c1c 96%, var(--vscode-foreground) 4%);
+    }
+
     .alert-badge-generic {
       color: var(--vscode-notificationsWarningIcon-foreground, #d29922);
     }
@@ -3555,20 +3575,40 @@ class QuotesViewProvider {
       }
       const title = escapeHtml(alertText);
       const label = escapeHtml(t('alert'));
-      const movingAverageDays = getMaxMovingAverageAlertDays(alerts);
-      const badgeText = movingAverageDays === null ? '!' : String(movingAverageDays);
-      const levelClass = movingAverageDays === null ? ' alert-badge-generic' : ' alert-badge-level-' + movingAverageDays;
-      const badges = [
-        '<span class="alert-badge' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(badgeText) + '</span>'
-      ];
+      const badges = renderMovingAverageAlertBadges(alerts, title, label);
+      if (badges.length === 0) {
+        badges.push('<span class="alert-badge alert-badge-generic" title="' + title + '" aria-label="' + label + '">!</span>');
+      }
       for (const direction of getAlertDirections(alerts)) {
         badges.push(renderAlertDirectionBadge(direction, title, label));
       }
       return badges.join('');
     }
 
-    function getMaxMovingAverageAlertDays(alerts) {
+    function renderMovingAverageAlertBadges(alerts, title, label) {
+      const badges = [];
+      const belowDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageBelow');
+      const aboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageAbove');
+      const holdAboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageHoldAbove');
+      if (belowDays !== null) {
+        badges.push(renderMovingAverageAlertBadge(belowDays, 'alert-badge-level-' + belowDays, title, label));
+      }
+      if (aboveDays !== null) {
+        badges.push(renderMovingAverageAlertBadge(aboveDays, 'alert-badge-above-level-' + aboveDays, title, label));
+      }
+      if (holdAboveDays !== null && holdAboveDays !== aboveDays) {
+        badges.push(renderMovingAverageAlertBadge(holdAboveDays, 'alert-badge-above-level-' + holdAboveDays, title, label));
+      }
+      return badges;
+    }
+
+    function renderMovingAverageAlertBadge(days, levelClass, title, label) {
+      return '<span class="alert-badge ' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(String(days)) + '</span>';
+    }
+
+    function getMaxMovingAverageAlertDays(alerts, type) {
       const days = alerts
+        .filter((alert) => String(alert && alert.type || '') === type)
         .map((alert) => Number(alert && alert.movingAverageDays))
         .filter((value) => Number.isFinite(value) && value > 0);
       return days.length > 0 ? Math.max(...days) : null;
@@ -3599,12 +3639,12 @@ class QuotesViewProvider {
       ].includes(type)) {
         return 'down';
       }
-      if (type === 'reboundLowVolume') {
+      if (type === 'reboundLowVolume' || type === 'movingAverageAbove' || type === 'movingAverageHoldAbove') {
         return 'up';
       }
 
       const key = String(alert && alert.key || '');
-      if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:/.test(key)) {
+      if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:|:movingAverageAbove:|:movingAverageHoldAbove:/.test(key)) {
         return 'up';
       }
       if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:/.test(key)) {
@@ -3612,7 +3652,7 @@ class QuotesViewProvider {
       }
 
       const label = String(alert && alert.label || '');
-      if (/上涨|涨幅|反弹|>=/.test(label)) {
+      if (/上涨|涨幅|反弹|站上|站稳|>=/.test(label)) {
         return 'up';
       }
       if (/下跌|跌破|回落|走弱|死叉|<=/.test(label)) {
@@ -4739,7 +4779,11 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       name: symbol.name || '',
       movingAverageBelow: true,
       movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
-      movingAverageDaysList: DEFAULT_MOVING_AVERAGE_ALERT_DAYS,
+      movingAverageBelowDaysList: DEFAULT_MOVING_AVERAGE_ALERT_DAYS,
+      movingAverageAbove: false,
+      movingAverageAboveDaysList: [],
+      movingAverageHoldAbove: false,
+      movingAverageHoldAboveDaysList: [],
       intradayHighPullback: true,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
@@ -4770,6 +4814,11 @@ function addDefaultIntradayHighPullbackAlerts(symbols, alerts) {
       code: symbol.code,
       name: symbol.name || '',
       movingAverageBelow: false,
+      movingAverageBelowDaysList: [],
+      movingAverageAbove: false,
+      movingAverageAboveDaysList: [],
+      movingAverageHoldAbove: false,
+      movingAverageHoldAboveDaysList: [],
       intradayHighPullback: true,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
@@ -4802,11 +4851,21 @@ function normalizeAlertRule(item) {
     changePercentBelow: optionalNumber(item.changePercentBelow)
   };
   const movingAverageBelow = item.movingAverageBelow !== false || item.movingAverageBelowDays !== undefined;
-  const movingAverageDaysValue = item.movingAverageDays !== undefined ? item.movingAverageDays : item.movingAverageBelowDays;
-  const movingAverageDaysList = sanitizeMovingAverageDaysList(movingAverageDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS);
-  const movingAverageDays = movingAverageDaysList.includes(DEFAULT_MOVING_AVERAGE_DAYS)
+  const movingAverageAbove = item.movingAverageAbove === true || item.movingAverageAboveDays !== undefined;
+  const movingAverageHoldAbove = item.movingAverageHoldAbove === true || item.movingAverageHoldAboveDays !== undefined;
+  const movingAverageBelowDaysValue = item.movingAverageBelowDays !== undefined ? item.movingAverageBelowDays : item.movingAverageDays;
+  const movingAverageAboveDaysValue = item.movingAverageAboveDays !== undefined ? item.movingAverageAboveDays : item.movingAverageDays;
+  const movingAverageHoldAboveDaysValue = item.movingAverageHoldAboveDays !== undefined ? item.movingAverageHoldAboveDays : item.movingAverageDays;
+  const movingAverageBelowDaysList = sanitizeMovingAverageDaysList(movingAverageBelowDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS);
+  const movingAverageAboveDaysList = movingAverageAbove
+    ? sanitizeMovingAverageDaysList(movingAverageAboveDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS)
+    : [];
+  const movingAverageHoldAboveDaysList = movingAverageHoldAbove
+    ? sanitizeMovingAverageDaysList(movingAverageHoldAboveDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS)
+    : [];
+  const movingAverageDays = movingAverageBelowDaysList.includes(DEFAULT_MOVING_AVERAGE_DAYS)
     ? DEFAULT_MOVING_AVERAGE_DAYS
-    : movingAverageDaysList[0];
+    : movingAverageBelowDaysList[0];
   const technicalIndicators = {
     bearishMovingAverage: item.bearishMovingAverage === true,
     bearishMovingAverageShortDays: sanitizeMovingAverageDays(item.bearishMovingAverageShortDays || DEFAULT_BEARISH_MA_DAYS.short),
@@ -4837,7 +4896,7 @@ function normalizeAlertRule(item) {
     intradayVwapBelow: item.intradayVwapBelow !== false
   };
 
-  if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !hasTechnicalAlertIndicator(technicalIndicators)) {
+  if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !movingAverageAbove && !movingAverageHoldAbove && !hasTechnicalAlertIndicator(technicalIndicators)) {
     return undefined;
   }
 
@@ -4845,8 +4904,12 @@ function normalizeAlertRule(item) {
     code,
     name: String(item.name || '').trim(),
     movingAverageBelow,
+    movingAverageAbove,
+    movingAverageHoldAbove,
     movingAverageDays,
-    movingAverageDaysList,
+    movingAverageBelowDaysList,
+    movingAverageAboveDaysList,
+    movingAverageHoldAboveDaysList,
     ...technicalIndicators,
     ...thresholds
   };
@@ -5420,6 +5483,8 @@ async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dail
 function summarizeAlertRules(rules) {
   const summary = {
     movingAverageBelow: 0,
+    movingAverageAbove: 0,
+    movingAverageHoldAbove: 0,
     intradayHighPullback: 0,
     threshold: 0,
     dailyTechnical: 0
@@ -5429,7 +5494,13 @@ function summarizeAlertRules(rules) {
       continue;
     }
     if (rule.movingAverageBelow) {
-      summary.movingAverageBelow += getRuleMovingAverageDays(rule).length;
+      summary.movingAverageBelow += getRuleMovingAverageBelowDays(rule).length;
+    }
+    if (rule.movingAverageAbove) {
+      summary.movingAverageAbove += getRuleMovingAverageAboveDays(rule).length;
+    }
+    if (rule.movingAverageHoldAbove) {
+      summary.movingAverageHoldAbove += getRuleMovingAverageHoldAboveDays(rule).length;
     }
     if (rule.intradayHighPullback) {
       summary.intradayHighPullback += 1;
@@ -5474,7 +5545,8 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
   const failures = [];
 
   for (const rule of rules) {
-    if (!rule.movingAverageBelow) {
+    const movingAverageDays = getRuleMovingAverageDays(rule);
+    if (movingAverageDays.length === 0) {
       continue;
     }
 
@@ -5486,7 +5558,7 @@ async function fetchAlertMovingAverageSnapshots(rules, quotesByCode, timeoutMs, 
     if (!daysByCode.has(rule.code)) {
       daysByCode.set(rule.code, new Set());
     }
-    for (const days of getRuleMovingAverageDays(rule)) {
+    for (const days of movingAverageDays) {
       daysByCode.get(rule.code).add(days);
     }
   }
@@ -5560,19 +5632,26 @@ function calculateMovingAverageSnapshot(quote, bars, days) {
   const previousCloses = bars
     .filter((bar) => bar.date !== today)
     .map((bar) => bar.close)
-    .filter((close) => Number.isFinite(close))
-    .slice(-(days - 1));
+    .filter((close) => Number.isFinite(close));
+  const currentAveragePreviousCloses = previousCloses.slice(-(days - 1));
+  const previousAverageCloses = previousCloses.slice(-days);
 
-  if (previousCloses.length < days - 1 || !Number.isFinite(quote.price)) {
+  if (currentAveragePreviousCloses.length < days - 1 || !Number.isFinite(quote.price)) {
     return null;
   }
 
-  const closes = [...previousCloses, quote.price];
+  const closes = [...currentAveragePreviousCloses, quote.price];
   const average = closes.reduce((sum, close) => sum + close, 0) / closes.length;
+  const previousAverage = previousAverageCloses.length === days
+    ? previousAverageCloses.reduce((sum, close) => sum + close, 0) / previousAverageCloses.length
+    : null;
+  const previousClose = previousCloses.length > 0 ? previousCloses[previousCloses.length - 1] : null;
   return {
     code: quote.code,
     days,
     average,
+    previousAverage,
+    previousClose,
     samples: closes.length
   };
 }
@@ -5663,11 +5742,21 @@ function toEastmoneySecid(code) {
 }
 
 function addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
-  if (!rule.movingAverageBelow || quote.price === null) {
+  if (quote.price === null) {
     return;
   }
 
-  for (const days of getRuleMovingAverageDays(rule)) {
+  addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
+  addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
+  addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
+}
+
+function addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
+  if (!rule.movingAverageBelow) {
+    return;
+  }
+
+  for (const days of getRuleMovingAverageBelowDays(rule)) {
     const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, days));
     if (!snapshot || !Number.isFinite(snapshot.average) || quote.price >= snapshot.average) {
       continue;
@@ -5689,12 +5778,109 @@ function addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAver
   }
 }
 
+function addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
+  if (!rule.movingAverageAbove) {
+    return;
+  }
+
+  for (const days of getRuleMovingAverageAboveDays(rule)) {
+    const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, days));
+    if (
+      !snapshot
+      || !Number.isFinite(snapshot.average)
+      || !Number.isFinite(snapshot.previousAverage)
+      || !Number.isFinite(snapshot.previousClose)
+      || snapshot.previousClose >= snapshot.previousAverage
+      || quote.price < snapshot.average
+    ) {
+      continue;
+    }
+
+    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
+    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const alertLabel = `站上${snapshot.days}日线 ${formattedAverage}`;
+
+    alerts.push({
+      key: `${quote.code}:movingAverageAbove:${snapshot.days}:${formattedAverage}`,
+      type: 'movingAverageAbove',
+      movingAverageDays: snapshot.days,
+      code: quote.code,
+      name: displayName,
+      label: alertLabel,
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+    });
+  }
+}
+
+function addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
+  if (!rule.movingAverageHoldAbove || !isAfterShanghaiClose()) {
+    return;
+  }
+
+  for (const days of getRuleMovingAverageHoldAboveDays(rule)) {
+    const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, days));
+    if (
+      !snapshot
+      || !Number.isFinite(snapshot.average)
+      || !Number.isFinite(snapshot.previousAverage)
+      || !Number.isFinite(snapshot.previousClose)
+      || snapshot.previousClose >= snapshot.previousAverage
+      || quote.price < snapshot.average
+    ) {
+      continue;
+    }
+
+    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
+    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const alertLabel = `站稳${snapshot.days}日线 ${formattedAverage}`;
+
+    alerts.push({
+      key: `${quote.code}:movingAverageHoldAbove:${snapshot.days}:${formattedAverage}`,
+      type: 'movingAverageHoldAbove',
+      movingAverageDays: snapshot.days,
+      code: quote.code,
+      name: displayName,
+      label: alertLabel,
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+    });
+  }
+}
+
 function getRuleMovingAverageDays(rule) {
+  const days = [
+    ...getRuleMovingAverageBelowDays(rule),
+    ...getRuleMovingAverageAboveDays(rule),
+    ...getRuleMovingAverageHoldAboveDays(rule)
+  ];
+  return [...new Set(days)].sort((left, right) => left - right);
+}
+
+function getRuleMovingAverageBelowDays(rule) {
   if (!rule || !rule.movingAverageBelow) {
     return [];
   }
-  if (Array.isArray(rule.movingAverageDaysList) && rule.movingAverageDaysList.length > 0) {
-    return rule.movingAverageDaysList;
+  if (Array.isArray(rule.movingAverageBelowDaysList) && rule.movingAverageBelowDaysList.length > 0) {
+    return rule.movingAverageBelowDaysList;
+  }
+  return [sanitizeMovingAverageDays(rule.movingAverageDays)];
+}
+
+function getRuleMovingAverageAboveDays(rule) {
+  if (!rule || !rule.movingAverageAbove) {
+    return [];
+  }
+  if (Array.isArray(rule.movingAverageAboveDaysList) && rule.movingAverageAboveDaysList.length > 0) {
+    return rule.movingAverageAboveDaysList;
+  }
+  return [sanitizeMovingAverageDays(rule.movingAverageDays)];
+}
+
+function getRuleMovingAverageHoldAboveDays(rule) {
+  if (!rule || !rule.movingAverageHoldAbove) {
+    return [];
+  }
+  if (Array.isArray(rule.movingAverageHoldAboveDaysList) && rule.movingAverageHoldAboveDaysList.length > 0) {
+    return rule.movingAverageHoldAboveDaysList;
   }
   return [sanitizeMovingAverageDays(rule.movingAverageDays)];
 }
