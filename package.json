@@ -511,9 +511,10 @@
                   5,
                   10,
                   20,
-                  60
+                  60,
+                  120
                 ],
-                "description": "Moving average window or windows used by movingAverageBelow. Defaults to 5, 10, 20, and 60, and is active unless movingAverageBelow is false."
+                "description": "Moving average window or windows used by movingAverageBelow. Defaults to 5, 10, 20, 60, and 120, and is active unless movingAverageBelow is false."
               },
               "movingAverageBelowDays": {
                 "oneOf": [

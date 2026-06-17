@@ -14,7 +14,7 @@ const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const DEFAULT_MOVING_AVERAGE_DAYS = 20;
-const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60];
+const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60, 120];
 const MAX_MOVING_AVERAGE_DAYS = 250;
 const DEFAULT_BEARISH_MA_DAYS = { short: 5, mid: 20, long: 60 };
 const DEFAULT_VOLUME_AVERAGE_DAYS = 5;
@@ -2031,19 +2031,23 @@ class QuotesViewProvider {
     }
 
     .alert-badge-level-5 {
-      color: color-mix(in srgb, #d29922 68%, var(--vscode-foreground) 32%);
+      color: color-mix(in srgb, #4caf50 68%, var(--vscode-foreground) 32%);
     }
 
     .alert-badge-level-10 {
-      color: color-mix(in srgb, #e67e22 76%, var(--vscode-foreground) 24%);
+      color: color-mix(in srgb, #3fab55 76%, var(--vscode-foreground) 24%);
     }
 
     .alert-badge-level-20 {
-      color: color-mix(in srgb, #e5534b 84%, var(--vscode-foreground) 16%);
+      color: color-mix(in srgb, #2e9d57 84%, var(--vscode-foreground) 16%);
     }
 
     .alert-badge-level-60 {
-      color: color-mix(in srgb, #d1242f 92%, var(--vscode-foreground) 8%);
+      color: color-mix(in srgb, #1f7a43 92%, var(--vscode-foreground) 8%);
+    }
+
+    .alert-badge-level-120 {
+      color: color-mix(in srgb, #0f5f36 96%, var(--vscode-foreground) 4%);
     }
 
     .alert-badge-generic {

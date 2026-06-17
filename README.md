@@ -101,7 +101,7 @@
     {
       "code": "sh600519",
       "name": "MA example",
-      "movingAverageDays": [5, 10, 20, 60]
+      "movingAverageDays": [5, 10, 20, 60, 120]
     },
     {
       "code": "sz000001",
@@ -130,7 +130,7 @@
 }
 ```
 
-When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60]`. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
+When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
 
 `intradayHighPullback` 会在标的当日最高价高于开盘价、当前涨跌幅转为负值，且从当日最高点回落幅度超过 `intradayHighPullbackPercent` 时触发。盘中会结合实时分时 VWAP（可用时）、最近刷新价格斜率和 `intradayDowntrendConfirmTicks` 连续确认来判断分时下跌趋势；收盘后会按当日日 K 收盘价继续展示预警。
 
