@@ -2255,7 +2255,7 @@ class QuotesViewProvider {
       min-width: 0;
       max-width: 100%;
       overflow: hidden;
-      color: var(--muted);
+      color: var(--flat);
       text-overflow: ellipsis;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
