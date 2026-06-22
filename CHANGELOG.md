@@ -8,6 +8,13 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.16] - 2026-06-22
+
+### Changed
+
+- Removed the inline quote-view sort hint from the webview and documented the configured-order behavior in README instead.
+- Bumped the extension version from `0.2.15` to `0.2.16`.
+
 ## [0.2.15] - 2026-06-22
 
 ### Added
@@ -17,7 +24,6 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
-- Removed the inline quote-view sort hint from the webview and documented the configured-order behavior in README instead.
 - Bumped the extension version from `0.2.14` to `0.2.15`.
 
 ### Fixed
