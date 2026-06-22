@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.17] - 2026-06-22
+
+### Changed
+
+- Bumped the extension version from `0.2.16` to `0.2.17`.
+
+### Fixed
+
+- Aligned the full-market breadth label and rising/falling counts with the configured quote color palette.
+
 ## [0.2.16] - 2026-06-22
 
 ### Changed
