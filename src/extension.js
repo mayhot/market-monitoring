@@ -1753,12 +1753,6 @@ class QuotesViewProvider {
       min-height: 28px;
     }
 
-    .hint {
-      margin: 0 0 8px;
-      color: var(--muted);
-      line-height: 1.4;
-    }
-
     .group {
       margin: 0 0 10px;
       border: 1px solid var(--border);
@@ -2397,7 +2391,6 @@ class QuotesViewProvider {
     <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
   <section class="ai-panel" id="ai-panel" hidden></section>
-  <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
   <footer class="index-dock">
     <div id="market-breadth" class="market-breadth" hidden></div>
@@ -2435,7 +2428,6 @@ class QuotesViewProvider {
         marketBreadthSource: '\u6570\u636e\u6e90',
         marketBreadthUpdatedAt: '\u66f4\u65b0',
         refreshing: '刷新中',
-        sortHint: '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。',
         noSymbols: '暂无标的，请在设置中配置 marketMonitoring.symbols。',
         tableColumns: '表格列',
         language: '语言',
@@ -2515,7 +2507,6 @@ class QuotesViewProvider {
         marketBreadthSource: 'Source',
         marketBreadthUpdatedAt: 'Updated',
         refreshing: 'Refreshing',
-        sortHint: 'Currently sorted by quote fields. Up/down changes the configured order, shown when sortBy is configured.',
         noSymbols: 'No symbols yet. Configure marketMonitoring.symbols in settings.',
         tableColumns: 'Table columns',
         language: 'Language',
@@ -2585,7 +2576,6 @@ class QuotesViewProvider {
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
-    const sortHint = document.getElementById('sort-hint');
     const marketBreadth = document.getElementById('market-breadth');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
@@ -3092,10 +3082,6 @@ class QuotesViewProvider {
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
       renderRefreshError(snapshot.error);
-      sortHint.textContent = snapshot.sortBy === 'configured'
-        ? ''
-        : t('sortHint');
-
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
         if (flashGroupNames) {

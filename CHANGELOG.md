@@ -17,6 +17,7 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
+- Removed the inline quote-view sort hint from the webview and documented the configured-order behavior in README instead.
 - Bumped the extension version from `0.2.14` to `0.2.15`.
 
 ### Fixed

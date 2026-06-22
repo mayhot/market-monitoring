@@ -160,7 +160,9 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 ## 排序配置
 
-行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。每个分组底部提供添加标的和修改按钮；上移、下移、删除按钮默认隐藏，点击分组底部的修改按钮后显示。默认按持仓标的的市值排序，只有能根据实时价格和持仓数量计算出市值的标的参与市值排序，其余标的保持配置顺序并跟在后面。若希望面板严格按手动顺序展示，请使用：
+行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。每个分组底部提供添加标的和修改按钮；上移、下移、删除按钮默认隐藏，点击分组底部的修改按钮后显示。默认按持仓标的的市值排序，只有能根据实时价格和持仓数量计算出市值的标的参与市值排序，其余标的保持配置顺序并跟在后面。
+
+当 `marketMonitoring.sortBy` 使用 `marketValue`、`changePercent`、`price`、`name`、`alias` 或 `code` 时，行情面板会按对应字段自动排序；上移、下移仍然只调整配置顺序。只有 `sortBy` 设为 `configured` 时，面板才严格按手动配置顺序展示。该说明保留在 README 和 CHANGELOG 中，插件界面不再展示额外提示文字。若希望面板严格按手动顺序展示，请使用：
 
 ```json
 {
