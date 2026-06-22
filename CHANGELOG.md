@@ -8,6 +8,21 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.15] - 2026-06-22
+
+### Added
+
+- Added configurable full-market breadth counts in the quote view footer, showing rising, falling, and flat stock counts above the index selector.
+- Added direct aggregate market breadth providers with retries, using Eastmoney first and Tonghuashun as a fallback.
+
+### Changed
+
+- Bumped the extension version from `0.2.14` to `0.2.15`.
+
+### Fixed
+
+- Escaped market breadth tooltip newlines so the webview script remains valid.
+
 ## [0.2.14] - 2026-06-22
 
 ### Added
