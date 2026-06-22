@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [Unreleased]
+
+### Added
+
+- Added the `marketValue` table column, calculated from latest price multiplied by holding quantity.
+
+### Changed
+
+- Changed the default quote sorting to order symbols with calculable holdings by market value while keeping other symbols in configured order.
+
 ## [0.2.13] - 2026-06-17
 
 ### Added

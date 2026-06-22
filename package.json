@@ -301,6 +301,7 @@
               "change",
               "cost",
               "holding",
+              "marketValue",
               "position",
               "netProfit"
             ],
@@ -313,6 +314,7 @@
               "Price change.",
               "Editable cost basis.",
               "Editable holding quantity.",
+              "Calculated market value from latest price multiplied by holding quantity.",
               "Calculated position percentage within the group.",
               "Calculated net profit."
             ]
@@ -340,9 +342,10 @@
         },
         "marketMonitoring.sortBy": {
           "type": "string",
-          "default": "configured",
+          "default": "marketValue",
           "enum": [
             "configured",
+            "marketValue",
             "changePercent",
             "price",
             "name",
@@ -351,6 +354,7 @@
           ],
           "enumDescriptions": [
             "Keep the order from marketMonitoring.symbols.",
+            "Sort held symbols by market value and keep symbols without calculable market value in configured order.",
             "Sort by change percentage.",
             "Sort by latest price.",
             "Sort by display name.",

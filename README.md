@@ -13,7 +13,7 @@
 - 涨跌颜色模式可配置，默认无颜色。
 - 支持按涨跌幅阈值给标的行添加低调的左侧色带标识。
 - 自定义价格小数位。
-- 标的表格列可配置，支持名称、别名、代码、价格、涨跌幅、涨跌额、成本、持仓、净收益额。
+- 标的表格列可配置，支持名称、别名、代码、价格、涨跌幅、涨跌额、成本、持仓、市值、仓位、净收益额。
 - 表格列默认均分，最小宽度为 20px，支持拖动列名右侧边缘调整列宽。
 - 成本和持仓可在表格中输入并修改，净收益额自动计算。
 - 分组末尾展示当前总资产，并在填写成本和持仓后汇总今日收益。
@@ -159,7 +159,7 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 ## 排序配置
 
-行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。每个分组底部提供添加标的和修改按钮；上移、下移、删除按钮默认隐藏，点击分组底部的修改按钮后显示。若希望面板严格按这个手动顺序展示，请使用：
+行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。每个分组底部提供添加标的和修改按钮；上移、下移、删除按钮默认隐藏，点击分组底部的修改按钮后显示。默认按持仓标的的市值排序，只有能根据实时价格和持仓数量计算出市值的标的参与市值排序，其余标的保持配置顺序并跟在后面。若希望面板严格按手动顺序展示，请使用：
 
 ```json
 {
@@ -170,9 +170,11 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 `marketMonitoring.sortBy` 可选值：
 
 - `configured`：保持 `marketMonitoring.symbols` 中的配置顺序。
+- `marketValue`：按市值排序，仅对有持仓且能计算市值的标的生效，其余标的保持配置顺序。
 - `changePercent`：按涨跌幅排序。
 - `price`：按最新价排序。
 - `name`：按展示名称排序。
+- `alias`：按拼音别名排序。
 - `code`：按代码排序。
 
 `marketMonitoring.sortDirection` 可选 `desc` 或 `asc`。
@@ -219,7 +221,7 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 请在 VS Code Settings 或 `settings.json` 中修改该配置。数组顺序即表格列展示顺序。也可以运行 `Market Monitoring: Configure Quote Columns`，用上移、下移、隐藏和添加操作调整同一个配置项。
 
-例如下面配置会按“名称、代码、价格、涨跌幅、持仓、净收益额”的顺序展示：
+例如下面配置会按“名称、代码、价格、涨跌幅、持仓、市值、净收益额”的顺序展示：
 
 ```json
 {
@@ -229,6 +231,7 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
     "price",
     "changePercent",
     "holding",
+    "marketValue",
     "netProfit"
   ]
 }
@@ -244,6 +247,7 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 - `change`：涨跌额。
 - `cost`：成本，可在表格中编辑。
 - `holding`：持仓，可在表格中编辑。
+- `marketValue`：市值，按 `当前价 * 持仓` 自动计算，仅在填写持仓且有有效价格时展示。
 - `position`：仓位，按当前标的市值占所在分组可计算总市值的比例自动计算，仅在填写持仓且有有效价格时展示。
 - `netProfit`：净收益额，按 `(当前价 - 成本) * 持仓` 自动计算。
 

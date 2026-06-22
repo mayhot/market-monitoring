@@ -28,7 +28,7 @@ const DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_CONFIRM_MINUTES = 3;
 const DEFAULT_MINUTE_TREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_EPSILON_PERCENT = 0.03;
-const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'position', 'netProfit'];
+const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'marketValue', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
   alias: 'Alias',
@@ -38,6 +38,7 @@ const QUOTE_COLUMN_LABELS = {
   change: 'Change',
   cost: 'Cost',
   holding: 'Holding',
+  marketValue: 'Market value',
   position: 'Position',
   netProfit: 'Net profit'
 };
@@ -1253,7 +1254,7 @@ class QuotesViewProvider {
       locale: resolveLanguage(DEFAULT_LANGUAGE),
       colors: getColorPalette('none'),
       alerts: [],
-      sortBy: 'configured',
+      sortBy: 'marketValue',
       sortDirection: 'desc',
       priceDecimalPlaces: 2,
       compactLargeAmounts: false,
@@ -1863,6 +1864,10 @@ class QuotesViewProvider {
       grid-template-columns: repeat(10, minmax(20px, 1fr));
     }
 
+    .quote.cols-11 {
+      grid-template-columns: repeat(11, minmax(20px, 1fr));
+    }
+
     .quote.editing.cols-1 {
       grid-template-columns: minmax(20px, 1fr) max-content;
     }
@@ -1901,6 +1906,10 @@ class QuotesViewProvider {
 
     .quote.editing.cols-10 {
       grid-template-columns: repeat(10, minmax(20px, 1fr)) max-content;
+    }
+
+    .quote.editing.cols-11 {
+      grid-template-columns: repeat(11, minmax(20px, 1fr)) max-content;
     }
 
     .quote-header {
@@ -2372,6 +2381,7 @@ class QuotesViewProvider {
         change: '涨跌额',
         cost: '成本',
         holding: '持仓',
+        marketValue: '市值',
         position: '仓位',
         netProfit: '净收益额',
         aiAssistant: 'AI 助手',
@@ -2440,6 +2450,7 @@ class QuotesViewProvider {
         change: 'Change',
         cost: 'Cost',
         holding: 'Holding',
+        marketValue: 'Market value',
         position: 'Position',
         netProfit: 'Net profit',
         aiAssistant: 'AI Assistant',
@@ -3558,6 +3569,10 @@ class QuotesViewProvider {
       if (column === 'holding') {
         return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'holding', 0, '1') : renderReadonlyNumber(quote.holding, 0)) + '</div>';
       }
+      if (column === 'marketValue') {
+        const value = calculateMarketValue(quote);
+        return '<div class="' + cellClass + '">' + (value === null ? '--' : formatDecimal(value, digits)) + '</div>';
+      }
       if (column === 'position') {
         return '<div class="' + cellClass + '">' + (quote.position === null || quote.position === undefined ? '--' : formatDecimal(quote.position, 2) + '%') + '</div>';
       }
@@ -3730,7 +3745,7 @@ class QuotesViewProvider {
     }
 
     function getQuoteGridClass(columns) {
-      return 'cols-' + Math.max(1, Math.min(10, columns.length));
+      return 'cols-' + Math.max(1, Math.min(11, columns.length));
     }
 
     function getGridTemplate(columns, editing) {
@@ -3765,6 +3780,7 @@ class QuotesViewProvider {
         change: t('change'),
         cost: t('cost'),
         holding: t('holding'),
+        marketValue: t('marketValue'),
         position: t('position'),
         netProfit: t('netProfit')
       }[column] || column;
@@ -3783,11 +3799,38 @@ class QuotesViewProvider {
     }
 
     function sortQuotesForColumn(items, column, direction) {
+      if (column === 'marketValue') {
+        return sortQuotesByMarketValue(items, direction);
+      }
       const multiplier = direction === 'asc' ? 1 : -1;
       return [...items].sort((left, right) => {
         const comparison = compareColumnValue(left, right, column);
         if (comparison !== 0) {
           return comparison * multiplier;
+        }
+        return left.index - right.index;
+      });
+    }
+
+    function sortQuotesByMarketValue(items, direction) {
+      const multiplier = direction === 'asc' ? 1 : -1;
+      return [...items].sort((left, right) => {
+        const leftValue = calculateMarketValue(left);
+        const rightValue = calculateMarketValue(right);
+        const leftHasValue = leftValue !== null;
+        const rightHasValue = rightValue !== null;
+
+        if (leftHasValue && rightHasValue) {
+          if (leftValue !== rightValue) {
+            return (leftValue > rightValue ? 1 : -1) * multiplier;
+          }
+          return left.index - right.index;
+        }
+        if (leftHasValue) {
+          return -1;
+        }
+        if (rightHasValue) {
+          return 1;
         }
         return left.index - right.index;
       });
@@ -3838,6 +3881,9 @@ class QuotesViewProvider {
       }
       if (column === 'holding') {
         return quote.holding;
+      }
+      if (column === 'marketValue') {
+        return calculateMarketValue(quote);
       }
       if (column === 'position') {
         return quote.position;
@@ -4012,7 +4058,7 @@ function readConfig() {
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
     showStatusBar: config.get('showStatusBar', false),
-    sortBy: sanitizeSortBy(config.get('sortBy', 'configured')),
+    sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
     compactLargeAmounts: Boolean(config.get('compactLargeAmounts', false)),
@@ -7431,6 +7477,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
     '涨跌额',
     '成本',
     '持仓',
+    '市值',
     '仓位',
     '净收益额'
   ]];
@@ -7452,6 +7499,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
         formatOptionalSignedDecimal(quote.change, priceDecimalPlaces),
         formatOptionalDecimal(quote.cost, 3),
         formatOptionalDecimal(quote.holding, 0),
+        formatOptionalDecimal(calculateMarketValue(quote), priceDecimalPlaces),
         formatOptionalPercent(calculatePositionValue(quote, positionTotal)),
         formatOptionalSignedDecimal(calculateNetProfitValue(quote), priceDecimalPlaces)
       ]);
@@ -7466,6 +7514,7 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
       formatOptionalLargeAmount(summary.totalAssets, compactLargeAmounts),
       formatOptionalSignedPercent(summary.dailyProfitPercent),
       formatOptionalSignedLargeAmount(summary.dailyProfit, compactLargeAmounts),
+      '',
       '',
       '',
       '',
@@ -7678,6 +7727,9 @@ function sortQuotes(items, sortBy, sortDirection) {
   if (sortBy === 'configured') {
     return items;
   }
+  if (sortBy === 'marketValue') {
+    return sortQuotesByMarketValue(items, sortDirection);
+  }
 
   const direction = sortDirection === 'asc' ? 1 : -1;
   return [...items].sort((left, right) => {
@@ -7686,6 +7738,30 @@ function sortQuotes(items, sortBy, sortDirection) {
       return comparison * direction;
     }
     return left.name.localeCompare(right.name, 'zh-CN');
+  });
+}
+
+function sortQuotesByMarketValue(items, sortDirection) {
+  const direction = sortDirection === 'asc' ? 1 : -1;
+  return [...items].sort((left, right) => {
+    const leftValue = calculateMarketValue(left);
+    const rightValue = calculateMarketValue(right);
+    const leftHasValue = leftValue !== null;
+    const rightHasValue = rightValue !== null;
+
+    if (leftHasValue && rightHasValue) {
+      if (leftValue !== rightValue) {
+        return (leftValue > rightValue ? 1 : -1) * direction;
+      }
+      return left.index - right.index;
+    }
+    if (leftHasValue) {
+      return -1;
+    }
+    if (rightHasValue) {
+      return 1;
+    }
+    return left.index - right.index;
   });
 }
 
@@ -7709,7 +7785,11 @@ function compareQuote(left, right, sortBy) {
 }
 
 function numericSortValue(quote, sortBy) {
-  const value = sortBy === 'price' ? quote.price : getQuoteDisplayChangePercent(quote);
+  const value = sortBy === 'price'
+    ? quote.price
+    : sortBy === 'marketValue'
+      ? calculateMarketValue(quote)
+      : getQuoteDisplayChangePercent(quote);
   return value === null ? Number.NEGATIVE_INFINITY : value;
 }
 
@@ -7872,8 +7952,8 @@ function buildStatusTooltip(snapshot) {
 }
 
 function sanitizeSortBy(value) {
-  const allowed = new Set(['configured', 'changePercent', 'price', 'name', 'alias', 'code']);
-  return allowed.has(value) ? value : 'configured';
+  const allowed = new Set(['configured', 'marketValue', 'changePercent', 'price', 'name', 'alias', 'code']);
+  return allowed.has(value) ? value : 'marketValue';
 }
 
 function sanitizeDecimalPlaces(value) {
