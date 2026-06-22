@@ -2261,12 +2261,16 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
+    .market-breadth-label {
+      color: var(--flat);
+    }
+
     .market-breadth-up {
-      color: var(--group-stat-up);
+      color: var(--up);
     }
 
     .market-breadth-down {
-      color: var(--group-stat-down);
+      color: var(--down);
     }
 
     .market-breadth-flat {
