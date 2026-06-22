@@ -8,7 +8,7 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
-## [Unreleased]
+## [0.2.14] - 2026-06-22
 
 ### Added
 
@@ -16,6 +16,7 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
+- Bumped the extension version from `0.2.13` to `0.2.14`.
 - Changed the default quote sorting to order symbols with calculable holdings by market value while keeping other symbols in configured order.
 
 ## [0.2.13] - 2026-06-17
