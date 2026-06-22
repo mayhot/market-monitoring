@@ -228,6 +228,11 @@
           "default": false,
           "description": "Show a compact market summary in the VS Code status bar."
         },
+        "marketMonitoring.showMarketBreadth": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show full-market rising, falling, and flat stock counts in the quote view footer."
+        },
         "marketMonitoring.priceDecimalPlaces": {
           "type": "number",
           "default": 2,

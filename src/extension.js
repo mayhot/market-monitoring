@@ -76,6 +76,15 @@ const INDEX_SYMBOLS = [
   { code: 'bj899050', name: '北证50', group: '指数' }
 ];
 const DEFAULT_INDEX_CODE = 'sh000001';
+const MARKET_BREADTH_SCOPE = '沪深京';
+const MARKET_BREADTH_RETRY_ATTEMPTS = 3;
+const MARKET_BREADTH_RETRY_DELAY_MS = 250;
+const MARKET_BREADTH_INDEXES = [
+  { secid: '1.000001', name: '沪市' },
+  { secid: '0.399001', name: '深市' },
+  { secid: '0.899050', name: '北证' }
+];
+const DEFAULT_MARKET_BREADTH_SOURCE = '东方财富';
 function activate(context) {
   const output = vscode.window.createOutputChannel('Market Monitoring');
   const provider = new QuotesViewProvider(context.extensionUri);
@@ -289,6 +298,7 @@ class MarketMonitor {
     this.groupStatsQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
+    this.marketBreadth = createEmptyMarketBreadth();
     const alertNotificationCache = readAlertNotificationCache(this.context.globalState);
     const today = getShanghaiDateString();
     this.notifiedAlertDate = alertNotificationCache.date === today ? alertNotificationCache.date : today;
@@ -961,6 +971,9 @@ class MarketMonitor {
       if (this.shouldEvaluateCurrentAlertSnapshot()) {
         await this.evaluateCurrentAlerts('cachedSnapshot');
       }
+      if (this.shouldRefreshMarketBreadth(phase, force)) {
+        await this.refreshMarketBreadth('cachedSnapshot');
+      }
       this.updateViews(phase.name);
       this.schedule();
       return;
@@ -988,7 +1001,9 @@ class MarketMonitor {
     });
     this.updateViews(phase.name, true);
 
+    let marketBreadthPromise;
     try {
+      marketBreadthPromise = this.refreshMarketBreadth('refresh');
       const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs, (message, details) => this.logInfo(message, details));
       if (this.isRefreshPaused()) {
         this.pendingRefreshAfterPause = true;
@@ -1003,6 +1018,7 @@ class MarketMonitor {
       this.groupStatsQuotes = mergeQuoteUpdates(fetchedQuotes, this.groupStatsQuotes, quoteSymbols);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
+      await marketBreadthPromise;
       await this.evaluateCurrentAlerts('refresh');
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
@@ -1016,6 +1032,9 @@ class MarketMonitor {
         updatedAt: this.lastUpdatedAt
       });
     } catch (error) {
+      if (marketBreadthPromise) {
+        await marketBreadthPromise;
+      }
       const message = getErrorMessage(error);
       const storedSnapshot = await this.database.readQuoteSnapshot(quoteSymbols);
       if (storedSnapshot.quotes.length > 0) {
@@ -1042,6 +1061,47 @@ class MarketMonitor {
       this.updateViews(getMarketPhase().name);
       this.schedule();
     }
+  }
+
+  async refreshMarketBreadth(reason) {
+    if (!this.config.showMarketBreadth) {
+      this.marketBreadth = createEmptyMarketBreadth();
+      return;
+    }
+
+    try {
+      const marketBreadth = await fetchMarketBreadth(this.config.requestTimeoutMs);
+      this.marketBreadth = marketBreadth;
+      this.logInfo('Market breadth refreshed', {
+        reason,
+        source: marketBreadth.source,
+        scope: marketBreadth.scope,
+        up: marketBreadth.up,
+        down: marketBreadth.down,
+        flat: marketBreadth.flat,
+        total: marketBreadth.total
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.marketBreadth = markMarketBreadthError(this.marketBreadth, message);
+      this.logWarn('Market breadth refresh failed', {
+        reason,
+        error: message
+      });
+    }
+  }
+
+  shouldRefreshMarketBreadth(phase, force) {
+    if (!this.config.showMarketBreadth) {
+      return false;
+    }
+    if (force || !this.marketBreadth || !Number.isFinite(this.marketBreadth.total)) {
+      return true;
+    }
+    if (phase && phase.isActive) {
+      return true;
+    }
+    return this.marketBreadth.updatedDate !== getShanghaiDateString();
   }
 
   async persistQuoteSnapshotToDatabase() {
@@ -1227,6 +1287,8 @@ class MarketMonitor {
       rowHighlight: this.config.rowHighlight,
       quoteColumns: this.config.quoteColumns,
       groupSummaryMetrics: this.config.groupSummaryMetrics,
+      showMarketBreadth: this.config.showMarketBreadth,
+      marketBreadth: this.marketBreadth,
       symbolCount: this.config.symbols.length,
       ai: createPublicAiConfig(this.config.ai),
       configuredGroups: this.config.groups,
@@ -1264,6 +1326,8 @@ class QuotesViewProvider {
       },
       quoteColumns: DEFAULT_QUOTE_COLUMNS,
       groupSummaryMetrics: DEFAULT_GROUP_SUMMARY_METRICS,
+      showMarketBreadth: true,
+      marketBreadth: createEmptyMarketBreadth(),
       symbolCount: 0,
       ai: createPublicAiConfig(readAiConfig(vscode.workspace.getConfiguration(CONFIG_SECTION))),
       configuredGroups: [DEFAULT_GROUP],
@@ -2171,7 +2235,7 @@ class QuotesViewProvider {
     .index-dock {
       display: grid;
       grid-template-columns: minmax(0, 1fr) max-content;
-      gap: 8px;
+      gap: 4px 8px;
       align-items: flex-end;
       flex: 0 0 auto;
       min-width: 0;
@@ -2188,8 +2252,31 @@ class QuotesViewProvider {
       align-items: center;
       min-width: 0;
       max-width: 100%;
-      padding: 6px 0 0;
       justify-self: end;
+    }
+
+    .market-breadth {
+      grid-column: 1 / -1;
+      justify-self: end;
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--muted);
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .market-breadth-up {
+      color: var(--group-stat-up);
+    }
+
+    .market-breadth-down {
+      color: var(--group-stat-down);
+    }
+
+    .market-breadth-flat {
+      color: var(--flat);
     }
 
     .index-quote {
@@ -2313,6 +2400,7 @@ class QuotesViewProvider {
   <div class="hint" id="sort-hint"></div>
   <main id="app"></main>
   <footer class="index-dock">
+    <div id="market-breadth" class="market-breadth" hidden></div>
     <div id="refresh-error" class="refresh-error" hidden></div>
     <div class="index-widget">
       <select id="index-select" title="切换指数"></select>
@@ -2335,6 +2423,17 @@ class QuotesViewProvider {
         settings: '设置',
         addGroup: '新增分组',
         switchIndex: '切换指数',
+        marketBreadth: '\u5168\u5e02\u573a',
+        marketBreadthUp: '\u6da8',
+        marketBreadthDown: '\u8dcc',
+        marketBreadthFlat: '\u5e73',
+        marketBreadthUpSymbol: '\u2191',
+        marketBreadthDownSymbol: '\u2193',
+        marketBreadthFlatSymbol: '\u2192',
+        marketBreadthUnavailable: '\u5168\u5e02\u573a\u6da8\u8dcc --',
+        marketBreadthTitle: '\u5168\u5e02\u573a\u6da8\u8dcc\u5bb6\u6570',
+        marketBreadthSource: '\u6570\u636e\u6e90',
+        marketBreadthUpdatedAt: '\u66f4\u65b0',
         refreshing: '刷新中',
         sortHint: '当前按行情字段自动排序；上移/下移会调整配置顺序，在 sortBy 设为 configured 时按该顺序显示。',
         noSymbols: '暂无标的，请在设置中配置 marketMonitoring.symbols。',
@@ -2404,6 +2503,17 @@ class QuotesViewProvider {
         settings: 'Settings',
         addGroup: 'Add group',
         switchIndex: 'Switch index',
+        marketBreadth: 'Market',
+        marketBreadthUp: 'Up',
+        marketBreadthDown: 'Down',
+        marketBreadthFlat: 'Flat',
+        marketBreadthUpSymbol: '\u2191',
+        marketBreadthDownSymbol: '\u2193',
+        marketBreadthFlatSymbol: '\u2192',
+        marketBreadthUnavailable: 'Market --',
+        marketBreadthTitle: 'Full-market breadth',
+        marketBreadthSource: 'Source',
+        marketBreadthUpdatedAt: 'Updated',
         refreshing: 'Refreshing',
         sortHint: 'Currently sorted by quote fields. Up/down changes the configured order, shown when sortBy is configured.',
         noSymbols: 'No symbols yet. Configure marketMonitoring.symbols in settings.',
@@ -2476,6 +2586,7 @@ class QuotesViewProvider {
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
     const sortHint = document.getElementById('sort-hint');
+    const marketBreadth = document.getElementById('market-breadth');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
@@ -3213,6 +3324,7 @@ class QuotesViewProvider {
     }
 
     function renderIndex(snapshot) {
+      renderMarketBreadth(snapshot);
       const indexes = snapshot && Array.isArray(snapshot.indexes) ? snapshot.indexes : [];
       if (!indexes.some((item) => item.code === selectedIndexCode)) {
         selectedIndexCode = snapshot.defaultIndexCode || 'sh000001';
@@ -3234,6 +3346,69 @@ class QuotesViewProvider {
       const percent = selected.changePercent === null ? '--' : formatSigned(selected.changePercent, 2) + '%';
       indexQuote.className = snapshot.loading ? 'index-quote refreshing-index' : 'index-quote';
       indexQuote.innerHTML = '<span class="index-price">' + price + '</span> <span class="quote-change ' + trend + '">' + percent + '</span>';
+    }
+
+    function renderMarketBreadth(snapshot) {
+      if (!snapshot || !snapshot.showMarketBreadth) {
+        marketBreadth.hidden = true;
+        marketBreadth.textContent = '';
+        marketBreadth.title = '';
+        return;
+      }
+
+      marketBreadth.hidden = false;
+      marketBreadth.className = snapshot.loading ? 'market-breadth refreshing-index' : 'market-breadth';
+      const breadth = snapshot.marketBreadth || {};
+      if (!hasMarketBreadthData(breadth)) {
+        marketBreadth.textContent = t('marketBreadthUnavailable');
+        marketBreadth.title = buildMarketBreadthTitle(breadth);
+        return;
+      }
+
+      marketBreadth.title = buildMarketBreadthTitle(breadth);
+      marketBreadth.innerHTML =
+        '<span class="market-breadth-label">' + escapeHtml(t('marketBreadth')) + '</span> ' +
+        '<span class="market-breadth-up">' + escapeHtml(t('marketBreadthUpSymbol')) + ' ' + escapeHtml(formatPlainInteger(breadth.up)) + '</span>' +
+        '<span> </span>' +
+        '<span class="market-breadth-down">' + escapeHtml(t('marketBreadthDownSymbol')) + ' ' + escapeHtml(formatPlainInteger(breadth.down)) + '</span>' +
+        '<span> </span>' +
+        '<span class="market-breadth-flat">' + escapeHtml(t('marketBreadthFlatSymbol')) + ' ' + escapeHtml(formatPlainInteger(breadth.flat)) + '</span>';
+    }
+
+    function hasMarketBreadthData(breadth) {
+      return Boolean(breadth
+        && isMarketBreadthNumber(breadth.up)
+        && isMarketBreadthNumber(breadth.down)
+        && isMarketBreadthNumber(breadth.flat));
+    }
+
+    function isMarketBreadthNumber(value) {
+      return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+    }
+
+    function buildMarketBreadthTitle(breadth) {
+      const lines = [t('marketBreadthTitle')];
+      if (breadth && breadth.scope) {
+        lines.push(breadth.scope);
+      }
+      if (hasMarketBreadthData(breadth)) {
+        lines.push(t('marketBreadthUp') + ': ' + formatInteger(breadth.up) + ', ' + t('marketBreadthDown') + ': ' + formatInteger(breadth.down) + ', ' + t('marketBreadthFlat') + ': ' + formatInteger(breadth.flat));
+      }
+      if (breadth && Array.isArray(breadth.parts) && breadth.parts.length > 0) {
+        for (const part of breadth.parts) {
+          lines.push(part.name + ': ' + t('marketBreadthUp') + ' ' + formatInteger(part.up) + ', ' + t('marketBreadthDown') + ' ' + formatInteger(part.down) + ', ' + t('marketBreadthFlat') + ' ' + formatInteger(part.flat));
+        }
+      }
+      if (breadth && breadth.source) {
+        lines.push(t('marketBreadthSource') + ': ' + breadth.source);
+      }
+      if (breadth && breadth.updatedAt) {
+        lines.push(t('marketBreadthUpdatedAt') + ': ' + breadth.updatedAt);
+      }
+      if (breadth && breadth.error) {
+        lines.push(breadth.error);
+      }
+      return lines.join('\\n');
     }
 
     function renderGroups(groups, snapshot, flashGroupNames = false) {
@@ -3985,6 +4160,22 @@ class QuotesViewProvider {
       return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1');
     }
 
+    function formatInteger(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return '--';
+      }
+      return addThousandsSeparators(String(Math.trunc(parsed)));
+    }
+
+    function formatPlainInteger(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return '--';
+      }
+      return String(Math.trunc(parsed));
+    }
+
     function formatAmountDecimal(value, digits) {
       return addThousandsSeparators(formatDecimal(value, digits));
     }
@@ -4068,6 +4259,7 @@ function readConfig() {
     },
     quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', DEFAULT_QUOTE_COLUMNS)),
     groupSummaryMetrics: sanitizeGroupSummaryMetrics(config.get('groupSummaryMetrics', DEFAULT_GROUP_SUMMARY_METRICS)),
+    showMarketBreadth: Boolean(config.get('showMarketBreadth', true)),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
@@ -6467,6 +6659,210 @@ function calculateBollingerBands(closes, days, stdDevMultiplier) {
     middle,
     upper: middle + stdDev * stdDevMultiplier,
     lower: middle - stdDev * stdDevMultiplier
+  };
+}
+
+async function fetchMarketBreadth(timeoutMs) {
+  const providers = [
+    {
+      name: '东方财富',
+      fetch: fetchEastmoneyMarketBreadth
+    },
+    {
+      name: '同花顺',
+      fetch: fetchTonghuashunMarketBreadth
+    }
+  ];
+  const errors = [];
+
+  for (const provider of providers) {
+    try {
+      return await fetchMarketBreadthWithRetry(provider, timeoutMs);
+    } catch (error) {
+      errors.push(`${provider.name}: ${getErrorMessage(error)}`);
+    }
+  }
+
+  throw new Error(`Market breadth providers failed: ${errors.join('; ')}`);
+}
+
+async function fetchMarketBreadthWithRetry(provider, timeoutMs) {
+  let lastError;
+  for (let attempt = 1; attempt <= MARKET_BREADTH_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const breadth = await provider.fetch(getMarketBreadthAttemptTimeoutMs(timeoutMs));
+      return {
+        ...breadth,
+        source: attempt > 1 ? `${breadth.source} retry ${attempt}` : breadth.source
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < MARKET_BREADTH_RETRY_ATTEMPTS) {
+        await sleep(MARKET_BREADTH_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function getMarketBreadthAttemptTimeoutMs(timeoutMs) {
+  const parsed = Number(timeoutMs);
+  const fallback = 5000;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.max(parsed, 3000), 5000);
+}
+
+async function fetchEastmoneyMarketBreadth(timeoutMs) {
+  const secids = MARKET_BREADTH_INDEXES.map((item) => item.secid).join(',');
+  const fields = 'f12,f13,f14,f104,f105,f106';
+  const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${encodeURIComponent(secids)}&fields=${encodeURIComponent(fields)}`;
+  const body = await requestText(url, timeoutMs, {
+    Referer: 'https://quote.eastmoney.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error) {
+    throw new Error(`Market breadth response is not JSON: ${body.slice(0, 200)}`);
+  }
+
+  const rows = parsed && parsed.data && Array.isArray(parsed.data.diff)
+    ? parsed.data.diff
+    : [];
+  const indexesBySecid = new Map(MARKET_BREADTH_INDEXES.map((item) => [item.secid, item]));
+  const parts = [];
+  let up = 0;
+  let down = 0;
+  let flat = 0;
+
+  for (const row of rows) {
+    const secid = `${row.f13}.${row.f12}`;
+    const index = indexesBySecid.get(secid);
+    if (!index) {
+      continue;
+    }
+
+    const part = {
+      name: index.name,
+      up: parseMarketBreadthValue(row.f104),
+      down: parseMarketBreadthValue(row.f105),
+      flat: parseMarketBreadthValue(row.f106)
+    };
+    if (part.up === null || part.down === null || part.flat === null) {
+      continue;
+    }
+
+    up += part.up;
+    down += part.down;
+    flat += part.flat;
+    parts.push(part);
+  }
+
+  if (parts.length === 0) {
+    throw new Error('Market breadth response did not include usable breadth fields');
+  }
+
+  return {
+    source: '东方财富',
+    scope: MARKET_BREADTH_SCOPE,
+    up,
+    down,
+    flat,
+    total: up + down + flat,
+    parts,
+    updatedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    updatedDate: getShanghaiDateString(),
+    status: '',
+    error: ''
+  };
+}
+
+async function fetchTonghuashunMarketBreadth(timeoutMs) {
+  const body = await requestText('https://q.10jqka.com.cn/api.php?t=indexflash&', timeoutMs, {
+    Referer: 'https://q.10jqka.com.cn/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch (error) {
+    throw new Error(`Tonghuashun market breadth response is not JSON: ${body.slice(0, 200)}`);
+  }
+
+  const data = parsed && parsed.zdfb_data ? parsed.zdfb_data : {};
+  const up = parseMarketBreadthValue(data.znum);
+  const down = parseMarketBreadthValue(data.dnum);
+  const bucketTotal = Array.isArray(data.zdfb)
+    ? data.zdfb.reduce((total, value) => {
+        const parsedValue = parseMarketBreadthValue(value);
+        return parsedValue === null ? total : total + parsedValue;
+      }, 0)
+    : null;
+  const flat = up !== null && down !== null && bucketTotal !== null && bucketTotal >= up + down
+    ? bucketTotal - up - down
+    : null;
+
+  if (up === null || down === null || flat === null) {
+    throw new Error('Tonghuashun market breadth response did not include usable breadth fields');
+  }
+
+  return {
+    source: '同花顺',
+    scope: 'A股',
+    up,
+    down,
+    flat,
+    total: up + down + flat,
+    parts: [{ name: 'A股', up, down, flat }],
+    updatedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    updatedDate: getShanghaiDateString(),
+    status: '',
+    error: ''
+  };
+}
+
+function parseMarketBreadthValue(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Math.trunc(parsed);
+}
+
+function createEmptyMarketBreadth() {
+  return {
+    source: DEFAULT_MARKET_BREADTH_SOURCE,
+    scope: MARKET_BREADTH_SCOPE,
+    up: null,
+    down: null,
+    flat: null,
+    total: null,
+    parts: [],
+    updatedAt: '',
+    updatedDate: '',
+    status: '',
+    error: ''
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function markMarketBreadthError(previous, error) {
+  const fallback = previous && Number.isFinite(previous.total)
+    ? previous
+    : createEmptyMarketBreadth();
+  return {
+    ...fallback,
+    status: 'error',
+    error
   };
 }
 

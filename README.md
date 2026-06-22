@@ -59,6 +59,7 @@
   "marketMonitoring.groupSummaryMetrics": [],
   "marketMonitoring.priceDecimalPlaces": 2,
   "marketMonitoring.compactLargeAmounts": false,
+  "marketMonitoring.showMarketBreadth": true,
   "marketMonitoring.language": "auto",
   "marketMonitoring.colorMode": "none",
   "marketMonitoring.rowHighlightUpPercent": 5,
