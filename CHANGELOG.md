@@ -8,6 +8,12 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## Unreleased
+
+### Added
+
+- Added a configurable full-market breadth refresh interval, defaulting to 5 minutes.
+
 ## [0.2.17] - 2026-06-22
 
 ### Changed

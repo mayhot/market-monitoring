@@ -299,6 +299,7 @@ class MarketMonitor {
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
     this.marketBreadth = createEmptyMarketBreadth();
+    this.lastMarketBreadthRefreshStartedAt = 0;
     const alertNotificationCache = readAlertNotificationCache(this.context.globalState);
     const today = getShanghaiDateString();
     this.notifiedAlertDate = alertNotificationCache.date === today ? alertNotificationCache.date : today;
@@ -364,6 +365,7 @@ class MarketMonitor {
       symbols: this.config.symbols.length,
       groups: this.config.groups.length,
       intervalSeconds: this.config.refreshIntervalSeconds,
+      marketBreadthIntervalSeconds: this.config.marketBreadthRefreshIntervalSeconds,
       onlyDuringTradingTime: this.config.onlyDuringTradingTime
     });
     this.updateViews(getMarketPhase().name, this.isRefreshing);
@@ -1003,7 +1005,9 @@ class MarketMonitor {
 
     let marketBreadthPromise;
     try {
-      marketBreadthPromise = this.refreshMarketBreadth('refresh');
+      if (this.shouldRefreshMarketBreadth(phase, force)) {
+        marketBreadthPromise = this.refreshMarketBreadth('refresh');
+      }
       const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs, (message, details) => this.logInfo(message, details));
       if (this.isRefreshPaused()) {
         this.pendingRefreshAfterPause = true;
@@ -1018,7 +1022,9 @@ class MarketMonitor {
       this.groupStatsQuotes = mergeQuoteUpdates(fetchedQuotes, this.groupStatsQuotes, quoteSymbols);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
-      await marketBreadthPromise;
+      if (marketBreadthPromise) {
+        await marketBreadthPromise;
+      }
       await this.evaluateCurrentAlerts('refresh');
       this.lastError = '';
       await writeCachedQuoteSnapshot(this.context.globalState, this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
@@ -1066,9 +1072,11 @@ class MarketMonitor {
   async refreshMarketBreadth(reason) {
     if (!this.config.showMarketBreadth) {
       this.marketBreadth = createEmptyMarketBreadth();
+      this.lastMarketBreadthRefreshStartedAt = 0;
       return;
     }
 
+    this.lastMarketBreadthRefreshStartedAt = Date.now();
     try {
       const marketBreadth = await fetchMarketBreadth(this.config.requestTimeoutMs);
       this.marketBreadth = marketBreadth;
@@ -1095,13 +1103,22 @@ class MarketMonitor {
     if (!this.config.showMarketBreadth) {
       return false;
     }
-    if (force || !this.marketBreadth || !Number.isFinite(this.marketBreadth.total)) {
+    if (force) {
       return true;
+    }
+    const intervalMs = Math.max(1, this.config.marketBreadthRefreshIntervalSeconds) * 1000;
+    const elapsedMs = Date.now() - (this.lastMarketBreadthRefreshStartedAt || 0);
+    const intervalElapsed = !this.lastMarketBreadthRefreshStartedAt || elapsedMs >= intervalMs;
+    if (!this.marketBreadth || !Number.isFinite(this.marketBreadth.total)) {
+      return intervalElapsed;
+    }
+    if (this.marketBreadth.updatedDate !== getShanghaiDateString()) {
+      return intervalElapsed;
     }
     if (phase && phase.isActive) {
-      return true;
+      return intervalElapsed;
     }
-    return this.marketBreadth.updatedDate !== getShanghaiDateString();
+    return false;
   }
 
   async persistQuoteSnapshotToDatabase() {
@@ -4237,6 +4254,7 @@ function readConfig() {
     enableAlerts: config.get('enableAlerts', true),
     enableAlertNotifications: config.get('enableAlertNotifications', false),
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
+    marketBreadthRefreshIntervalSeconds: sanitizeMarketBreadthRefreshIntervalSeconds(config.get('marketBreadthRefreshIntervalSeconds', 300)),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
     showStatusBar: config.get('showStatusBar', false),
     sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
@@ -4286,6 +4304,14 @@ function createPublicAiConfig(ai) {
     enabled: Boolean(ai && ai.enabled),
     configured: Boolean(ai && ai.enabled && isAiConfigured(ai))
   };
+}
+
+function sanitizeMarketBreadthRefreshIntervalSeconds(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 300;
+  }
+  return Math.round(Math.min(3600, Math.max(30, parsed)));
 }
 
 function isAiConfigured(ai) {

@@ -233,6 +233,13 @@
           "default": true,
           "description": "Show full-market rising, falling, and flat stock counts in the quote view footer."
         },
+        "marketMonitoring.marketBreadthRefreshIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "Full-market rising, falling, and flat stock count refresh interval in seconds."
+        },
         "marketMonitoring.priceDecimalPlaces": {
           "type": "number",
           "default": 2,

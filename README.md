@@ -60,6 +60,7 @@
   "marketMonitoring.priceDecimalPlaces": 2,
   "marketMonitoring.compactLargeAmounts": false,
   "marketMonitoring.showMarketBreadth": true,
+  "marketMonitoring.marketBreadthRefreshIntervalSeconds": 300,
   "marketMonitoring.language": "auto",
   "marketMonitoring.colorMode": "none",
   "marketMonitoring.rowHighlightUpPercent": 5,
