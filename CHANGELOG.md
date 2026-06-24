@@ -14,6 +14,10 @@ All notable changes to this extension are documented in this file.
 
 - Added a configurable full-market breadth refresh interval, defaulting to 5 minutes.
 
+### Changed
+
+- Reused the index footer's left status area for full-market breadth counts, with refresh messages taking priority.
+
 ## [0.2.17] - 2026-06-22
 
 ### Changed

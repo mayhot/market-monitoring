@@ -2247,7 +2247,7 @@ class QuotesViewProvider {
       display: grid;
       grid-template-columns: minmax(0, 1fr) max-content;
       gap: 4px 8px;
-      align-items: flex-end;
+      align-items: center;
       flex: 0 0 auto;
       min-width: 0;
       max-width: 100%;
@@ -2257,6 +2257,7 @@ class QuotesViewProvider {
     }
 
     .index-widget {
+      grid-column: 2;
       display: grid;
       grid-template-columns: minmax(0, auto) auto;
       gap: 8px;
@@ -2266,20 +2267,16 @@ class QuotesViewProvider {
       justify-self: end;
     }
 
-    .market-breadth {
-      grid-column: 1 / -1;
-      justify-self: end;
+    .footer-status {
+      grid-column: 1;
       min-width: 0;
       max-width: 100%;
       overflow: hidden;
       color: var(--flat);
       text-overflow: ellipsis;
       font-variant-numeric: tabular-nums;
+      line-height: 28px;
       white-space: nowrap;
-    }
-
-    .market-breadth-label {
-      color: var(--flat);
     }
 
     .market-breadth-up {
@@ -2301,19 +2298,15 @@ class QuotesViewProvider {
       text-overflow: ellipsis;
       text-align: right;
       font-variant-numeric: tabular-nums;
+      line-height: 28px;
       white-space: nowrap;
     }
 
     .refresh-error {
-      min-width: 0;
-      max-width: 100%;
-      overflow: hidden;
-      padding: 6px 0 0;
       color: var(--vscode-errorForeground);
-      white-space: nowrap;
     }
 
-    .refresh-error-text {
+    .footer-status-text {
       display: inline-block;
       max-width: 100%;
       overflow: hidden;
@@ -2321,7 +2314,7 @@ class QuotesViewProvider {
       vertical-align: bottom;
     }
 
-    .refresh-error.scrolling .refresh-error-text {
+    .footer-status.scrolling .footer-status-text {
       max-width: none;
       padding-left: 100%;
       animation: market-monitoring-error-scroll 12s linear infinite;
@@ -2414,8 +2407,7 @@ class QuotesViewProvider {
   <section class="ai-panel" id="ai-panel" hidden></section>
   <main id="app"></main>
   <footer class="index-dock">
-    <div id="market-breadth" class="market-breadth" hidden></div>
-    <div id="refresh-error" class="refresh-error" hidden></div>
+    <div id="refresh-error" class="footer-status" hidden></div>
     <div class="index-widget">
       <select id="index-select" title="切换指数"></select>
       <div id="index-quote" class="index-quote flat">--</div>
@@ -2444,7 +2436,6 @@ class QuotesViewProvider {
         marketBreadthUpSymbol: '\u2191',
         marketBreadthDownSymbol: '\u2193',
         marketBreadthFlatSymbol: '\u2192',
-        marketBreadthUnavailable: '\u5168\u5e02\u573a\u6da8\u8dcc --',
         marketBreadthTitle: '\u5168\u5e02\u573a\u6da8\u8dcc\u5bb6\u6570',
         marketBreadthSource: '\u6570\u636e\u6e90',
         marketBreadthUpdatedAt: '\u66f4\u65b0',
@@ -2523,7 +2514,6 @@ class QuotesViewProvider {
         marketBreadthUpSymbol: '\u2191',
         marketBreadthDownSymbol: '\u2193',
         marketBreadthFlatSymbol: '\u2192',
-        marketBreadthUnavailable: 'Market --',
         marketBreadthTitle: 'Full-market breadth',
         marketBreadthSource: 'Source',
         marketBreadthUpdatedAt: 'Updated',
@@ -2597,7 +2587,6 @@ class QuotesViewProvider {
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
-    const marketBreadth = document.getElementById('market-breadth');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
@@ -3069,7 +3058,7 @@ class QuotesViewProvider {
       } catch (error) {
         const message = error && error.message ? error.message : String(error);
         reportWebviewError(message, '', 0, 0);
-        renderRefreshError(message);
+        renderFooterStatus({ error: message });
       }
     }
 
@@ -3102,7 +3091,7 @@ class QuotesViewProvider {
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
-      renderRefreshError(snapshot.error);
+      renderFooterStatus(snapshot);
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
         if (flashGroupNames) {
@@ -3136,14 +3125,23 @@ class QuotesViewProvider {
         && Boolean(activeElement.closest('input[data-field], input[data-group-name], input[data-symbol-query], .group-symbol-form'));
     }
 
-    function renderRefreshError(error) {
-      const message = String(error || '').trim();
-      refreshError.hidden = !message;
-      refreshError.innerHTML = message ? '<span class="refresh-error-text">' + escapeHtml(message) + '</span>' : '';
-      refreshError.title = message;
+    function renderFooterStatus(snapshot) {
+      const message = String((snapshot && snapshot.error) || '').trim();
+      if (message) {
+        refreshError.hidden = false;
+        refreshError.className = 'footer-status refresh-error';
+        refreshError.innerHTML = '<span class="footer-status-text">' + escapeHtml(message) + '</span>';
+        refreshError.title = message;
+        window.requestAnimationFrame(() => {
+          const text = refreshError.querySelector('.footer-status-text');
+          refreshError.classList.toggle('scrolling', Boolean(text && text.scrollWidth > refreshError.clientWidth));
+        });
+        return;
+      }
+
+      renderMarketBreadth(snapshot);
       window.requestAnimationFrame(() => {
-        const text = refreshError.querySelector('.refresh-error-text');
-        refreshError.classList.toggle('scrolling', Boolean(text && text.scrollWidth > refreshError.clientWidth));
+        refreshError.classList.remove('scrolling');
       });
     }
 
@@ -3331,7 +3329,6 @@ class QuotesViewProvider {
     }
 
     function renderIndex(snapshot) {
-      renderMarketBreadth(snapshot);
       const indexes = snapshot && Array.isArray(snapshot.indexes) ? snapshot.indexes : [];
       if (!indexes.some((item) => item.code === selectedIndexCode)) {
         selectedIndexCode = snapshot.defaultIndexCode || 'sh000001';
@@ -3357,24 +3354,24 @@ class QuotesViewProvider {
 
     function renderMarketBreadth(snapshot) {
       if (!snapshot || !snapshot.showMarketBreadth) {
-        marketBreadth.hidden = true;
-        marketBreadth.textContent = '';
-        marketBreadth.title = '';
+        refreshError.hidden = true;
+        refreshError.textContent = '';
+        refreshError.title = '';
+        refreshError.className = 'footer-status';
         return;
       }
 
-      marketBreadth.hidden = false;
-      marketBreadth.className = snapshot.loading ? 'market-breadth refreshing-index' : 'market-breadth';
+      refreshError.hidden = false;
+      refreshError.className = snapshot.loading ? 'footer-status refreshing-index' : 'footer-status';
       const breadth = snapshot.marketBreadth || {};
       if (!hasMarketBreadthData(breadth)) {
-        marketBreadth.textContent = t('marketBreadthUnavailable');
-        marketBreadth.title = buildMarketBreadthTitle(breadth);
+        refreshError.textContent = '--';
+        refreshError.title = buildMarketBreadthTitle(breadth);
         return;
       }
 
-      marketBreadth.title = buildMarketBreadthTitle(breadth);
-      marketBreadth.innerHTML =
-        '<span class="market-breadth-label">' + escapeHtml(t('marketBreadth')) + '</span> ' +
+      refreshError.title = buildMarketBreadthTitle(breadth);
+      refreshError.innerHTML =
         '<span class="market-breadth-up">' + escapeHtml(t('marketBreadthUpSymbol')) + ' ' + escapeHtml(formatPlainInteger(breadth.up)) + '</span>' +
         '<span> </span>' +
         '<span class="market-breadth-down">' + escapeHtml(t('marketBreadthDownSymbol')) + ' ' + escapeHtml(formatPlainInteger(breadth.down)) + '</span>' +
