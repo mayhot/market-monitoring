@@ -8,7 +8,7 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
-## Unreleased
+## [0.2.18] - 2026-06-24
 
 ### Added
 
@@ -16,6 +16,7 @@ All notable changes to this extension are documented in this file.
 
 ### Changed
 
+- Bumped the extension version from `0.2.17` to `0.2.18`.
 - Reused the index footer's left status area for full-market breadth counts, with refresh messages taking priority.
 
 ## [0.2.17] - 2026-06-22

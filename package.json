@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
