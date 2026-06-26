@@ -2092,6 +2092,16 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
+    .holding-dot {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--vscode-foreground) 78%, var(--focus) 22%);
+      vertical-align: 2px;
+    }
+
     .alert-badge {
       display: inline-flex;
       align-items: center;
@@ -3720,8 +3730,12 @@ class QuotesViewProvider {
         }
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
+        const heldLabel = '\u6301\u6709';
+        const holdingMarker = hasHoldingQuantity(quote)
+          ? '<span class="holding-dot" role="img" title="' + heldLabel + '" aria-label="' + heldLabel + '"></span>'
+          : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + escapeHtml(quote.name) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
+          '<div class="name" title="' + escapeHtml(quote.name) + '">' + holdingMarker + escapeHtml(quote.name) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -3917,10 +3931,15 @@ class QuotesViewProvider {
     function calculateMarketValue(quote) {
       const price = Number(quote.price);
       const holding = Number(quote.holding);
-      if (!Number.isFinite(price) || !Number.isFinite(holding) || holding <= 0) {
+      if (!Number.isFinite(price) || !hasHoldingQuantity(quote)) {
         return null;
       }
       return price * holding;
+    }
+
+    function hasHoldingQuantity(quote) {
+      const holding = Number(quote && quote.holding);
+      return Number.isFinite(holding) && holding > 0;
     }
 
     function getQuoteGridClass(columns) {
