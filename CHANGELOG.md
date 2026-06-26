@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.2.19] - 2026-06-26
+
+### Added
+
+- Added a small solid marker before held symbol names in the quote view, while leaving watch-only symbols unmarked.
+
+### Changed
+
+- Bumped the extension version from `0.2.18` to `0.2.19`.
+
 ## [0.2.18] - 2026-06-24
 
 ### Added
