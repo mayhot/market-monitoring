@@ -551,6 +551,38 @@
                 ],
                 "description": "Compatibility shorthand: setting this also enables movingAverageBelow."
               },
+              "movingAverageS": {
+                "type": "boolean",
+                "default": true,
+                "description": "Trigger an S alert when the latest price is at or below the configured N-day moving average after applying the downside offset. Enabled by default for each alert rule; set false to disable."
+              },
+              "movingAverageSDays": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 250
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 250
+                    }
+                  }
+                ],
+                "default": 20,
+                "description": "Moving average window or windows used by movingAverageS. Defaults to 20. Setting this also enables movingAverageS."
+              },
+              "movingAverageSOffsetPercent": {
+                "type": "number",
+                "default": 4,
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Downside offset percentage used by movingAverageS. For example, 4 triggers when price is less than or equal to MA(N) * 0.96."
+              },
               "movingAverageHoldBelow": {
                 "type": "boolean",
                 "default": false,

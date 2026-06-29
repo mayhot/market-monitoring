@@ -104,6 +104,8 @@
       "code": "sh600519",
       "name": "MA example",
       "movingAverageDays": [5, 10, 20, 60, 120],
+      "movingAverageSDays": 20,
+      "movingAverageSOffsetPercent": 4,
       "movingAverageHoldBelow": true,
       "movingAverageHoldBelowDays": [5, 10, 20, 60, 120]
     },
@@ -143,7 +145,9 @@
 }
 ```
 
-When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` to disable moving-average alerts for a symbol.
+When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`, plus default `movingAverageS: true` alerts with `movingAverageSDays: 20` and `movingAverageSOffsetPercent: 4`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` or `movingAverageS: false` to disable those moving-average alerts for a symbol.
+
+`movingAverageS` triggers an "S预警" when the latest price is less than or equal to `MA(N) * (1 - X / 100)`. Use `movingAverageSDays` to configure N, and `movingAverageSOffsetPercent` to configure X.
 
 Set `movingAverageHoldBelow: true` for close-confirmed "失守 N 日线" alerts using the same cross-down condition after market close. This downside confirmation alert is disabled by default; use `movingAverageHoldBelowDays` to choose its windows.
 

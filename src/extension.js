@@ -16,6 +16,7 @@ const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
 const DEFAULT_MOVING_AVERAGE_DAYS = 20;
 const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60, 120];
 const MAX_MOVING_AVERAGE_DAYS = 250;
+const DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT = 4;
 const DEFAULT_BEARISH_MA_DAYS = { short: 5, mid: 20, long: 60 };
 const DEFAULT_VOLUME_AVERAGE_DAYS = 5;
 const DEFAULT_LOW_BREAK_DAYS = 20;
@@ -2168,6 +2169,10 @@ class QuotesViewProvider {
       color: var(--vscode-notificationsWarningIcon-foreground, #d29922);
     }
 
+    .alert-badge-s {
+      color: color-mix(in srgb, #f59e0b 88%, var(--vscode-foreground) 12%);
+    }
+
     .alert-badge-direction {
       display: inline-block;
       width: 14px;
@@ -3796,11 +3801,15 @@ class QuotesViewProvider {
     function renderMovingAverageAlertBadges(alerts, title, label) {
       const badges = [];
       const belowDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageBelow');
+      const hasSAlert = alerts.some((alert) => String(alert && alert.type || '') === 'movingAverageS');
       const holdBelowDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageHoldBelow');
       const aboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageAbove');
       const holdAboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageHoldAbove');
       if (belowDays !== null) {
         badges.push(renderMovingAverageAlertBadge(belowDays, 'alert-badge-level-' + belowDays, title, label));
+      }
+      if (hasSAlert) {
+        badges.push(renderMovingAverageAlertBadge('S', 'alert-badge-s', title, label));
       }
       if (holdBelowDays !== null && holdBelowDays !== belowDays) {
         badges.push(renderMovingAverageAlertBadge(holdBelowDays, 'alert-badge-level-' + holdBelowDays, title, label));
@@ -3841,6 +3850,7 @@ class QuotesViewProvider {
       const type = String(alert && alert.type || '');
       if ([
         'movingAverageBelow',
+        'movingAverageS',
         'movingAverageHoldBelow',
         'intradayHighPullback',
         'bearishMovingAverage',
@@ -3860,7 +3870,7 @@ class QuotesViewProvider {
       if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:|:movingAverageAbove:|:movingAverageHoldAbove:/.test(key)) {
         return 'up';
       }
-      if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:movingAverageHoldBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:/.test(key)) {
+      if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:movingAverageS:|:movingAverageHoldBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:/.test(key)) {
         return 'down';
       }
 
@@ -5055,6 +5065,9 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       movingAverageBelow: true,
       movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
       movingAverageBelowDaysList: DEFAULT_MOVING_AVERAGE_ALERT_DAYS,
+      movingAverageS: true,
+      movingAverageSDaysList: [DEFAULT_MOVING_AVERAGE_DAYS],
+      movingAverageSOffsetPercent: DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT,
       movingAverageHoldBelow: false,
       movingAverageHoldBelowDaysList: [],
       movingAverageAbove: false,
@@ -5092,6 +5105,9 @@ function addDefaultIntradayHighPullbackAlerts(symbols, alerts) {
       name: symbol.name || '',
       movingAverageBelow: false,
       movingAverageBelowDaysList: [],
+      movingAverageS: false,
+      movingAverageSDaysList: [],
+      movingAverageSOffsetPercent: DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT,
       movingAverageHoldBelow: false,
       movingAverageHoldBelowDaysList: [],
       movingAverageAbove: false,
@@ -5130,14 +5146,19 @@ function normalizeAlertRule(item) {
     changePercentBelow: optionalNumber(item.changePercentBelow)
   };
   const movingAverageBelow = item.movingAverageBelow !== false || item.movingAverageBelowDays !== undefined;
+  const movingAverageS = item.movingAverageS !== false || item.movingAverageSDays !== undefined;
   const movingAverageHoldBelow = item.movingAverageHoldBelow === true || item.movingAverageHoldBelowDays !== undefined;
   const movingAverageAbove = item.movingAverageAbove === true || item.movingAverageAboveDays !== undefined;
   const movingAverageHoldAbove = item.movingAverageHoldAbove === true || item.movingAverageHoldAboveDays !== undefined;
   const movingAverageBelowDaysValue = item.movingAverageBelowDays !== undefined ? item.movingAverageBelowDays : item.movingAverageDays;
+  const movingAverageSDaysValue = item.movingAverageSDays !== undefined ? item.movingAverageSDays : DEFAULT_MOVING_AVERAGE_DAYS;
   const movingAverageHoldBelowDaysValue = item.movingAverageHoldBelowDays !== undefined ? item.movingAverageHoldBelowDays : item.movingAverageDays;
   const movingAverageAboveDaysValue = item.movingAverageAboveDays !== undefined ? item.movingAverageAboveDays : item.movingAverageDays;
   const movingAverageHoldAboveDaysValue = item.movingAverageHoldAboveDays !== undefined ? item.movingAverageHoldAboveDays : item.movingAverageDays;
   const movingAverageBelowDaysList = sanitizeMovingAverageDaysList(movingAverageBelowDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS);
+  const movingAverageSDaysList = movingAverageS
+    ? sanitizeMovingAverageDaysList(movingAverageSDaysValue, [DEFAULT_MOVING_AVERAGE_DAYS])
+    : [];
   const movingAverageHoldBelowDaysList = movingAverageHoldBelow
     ? sanitizeMovingAverageDaysList(movingAverageHoldBelowDaysValue, DEFAULT_MOVING_AVERAGE_ALERT_DAYS)
     : [];
@@ -5180,7 +5201,7 @@ function normalizeAlertRule(item) {
     intradayVwapBelow: item.intradayVwapBelow !== false
   };
 
-  if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !movingAverageHoldBelow && !movingAverageAbove && !movingAverageHoldAbove && !hasTechnicalAlertIndicator(technicalIndicators)) {
+  if (Object.values(thresholds).every((value) => value === null) && !movingAverageBelow && !movingAverageS && !movingAverageHoldBelow && !movingAverageAbove && !movingAverageHoldAbove && !hasTechnicalAlertIndicator(technicalIndicators)) {
     return undefined;
   }
 
@@ -5188,11 +5209,14 @@ function normalizeAlertRule(item) {
     code,
     name: String(item.name || '').trim(),
     movingAverageBelow,
+    movingAverageS,
     movingAverageHoldBelow,
     movingAverageAbove,
     movingAverageHoldAbove,
     movingAverageDays,
     movingAverageBelowDaysList,
+    movingAverageSDaysList,
+    movingAverageSOffsetPercent: sanitizeMovingAverageSOffsetPercent(item.movingAverageSOffsetPercent),
     movingAverageHoldBelowDaysList,
     movingAverageAboveDaysList,
     movingAverageHoldAboveDaysList,
@@ -5293,6 +5317,17 @@ function sanitizeMovingAverageDaysList(value, fallback = [DEFAULT_MOVING_AVERAGE
     .map((parsed) => Math.min(MAX_MOVING_AVERAGE_DAYS, Math.max(1, parsed)));
   const uniqueDays = [...new Set(days)].sort((left, right) => left - right);
   return uniqueDays.length > 0 ? uniqueDays : [...fallback];
+}
+
+function sanitizeMovingAverageSOffsetPercent(value) {
+  return clampNumber(optionalPositiveNumber(value, DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT), 0, 100);
+}
+
+function formatPercentValue(value) {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  return value.toFixed(2).replace(/\.?0+$/, '');
 }
 
 function sanitizeIntradayConfirmTicks(value) {
@@ -5769,6 +5804,7 @@ async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dail
 function summarizeAlertRules(rules) {
   const summary = {
     movingAverageBelow: 0,
+    movingAverageS: 0,
     movingAverageHoldBelow: 0,
     movingAverageAbove: 0,
     movingAverageHoldAbove: 0,
@@ -5782,6 +5818,9 @@ function summarizeAlertRules(rules) {
     }
     if (rule.movingAverageBelow) {
       summary.movingAverageBelow += getRuleMovingAverageBelowDays(rule).length;
+    }
+    if (rule.movingAverageS) {
+      summary.movingAverageS += getRuleMovingAverageSDays(rule).length;
     }
     if (rule.movingAverageHoldBelow) {
       summary.movingAverageHoldBelow += getRuleMovingAverageHoldBelowDays(rule).length;
@@ -6037,6 +6076,7 @@ function addMovingAverageAlertIfMet(alerts, quote, displayName, rule, movingAver
   }
 
   addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
+  addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
   addMovingAverageHoldBelowAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
   addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
   addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces);
@@ -6072,6 +6112,42 @@ function addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movin
       name: displayName,
       label: alertLabel,
       message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+    });
+  }
+}
+
+function addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
+  if (!rule.movingAverageS) {
+    return;
+  }
+
+  const offsetPercent = sanitizeMovingAverageSOffsetPercent(rule.movingAverageSOffsetPercent);
+  for (const days of getRuleMovingAverageSDays(rule)) {
+    const snapshot = movingAverageSnapshots.get(getMovingAverageSnapshotKey(rule.code, days));
+    if (!snapshot || !Number.isFinite(snapshot.average)) {
+      continue;
+    }
+
+    const threshold = snapshot.average * (1 - offsetPercent / 100);
+    if (!Number.isFinite(threshold) || quote.price > threshold) {
+      continue;
+    }
+
+    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
+    const formattedThreshold = threshold.toFixed(priceDecimalPlaces);
+    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedOffsetPercent = formatPercentValue(offsetPercent);
+    const alertLabel = `S预警 跌破${snapshot.days}日线下偏移${formattedOffsetPercent}% ${formattedThreshold}`;
+
+    alerts.push({
+      key: `${quote.code}:movingAverageS:${snapshot.days}:${formattedOffsetPercent}:${formattedThreshold}`,
+      type: 'movingAverageS',
+      movingAverageDays: snapshot.days,
+      movingAverageSOffsetPercent: offsetPercent,
+      code: quote.code,
+      name: displayName,
+      label: alertLabel,
+      message: `${displayName} ${alertLabel}，${snapshot.days}日线 ${formattedAverage}，当前 ${formattedValue}`
     });
   }
 }
@@ -6181,6 +6257,7 @@ function addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, m
 function getRuleMovingAverageDays(rule) {
   const days = [
     ...getRuleMovingAverageBelowDays(rule),
+    ...getRuleMovingAverageSDays(rule),
     ...getRuleMovingAverageHoldBelowDays(rule),
     ...getRuleMovingAverageAboveDays(rule),
     ...getRuleMovingAverageHoldAboveDays(rule)
@@ -6196,6 +6273,16 @@ function getRuleMovingAverageBelowDays(rule) {
     return rule.movingAverageBelowDaysList;
   }
   return [sanitizeMovingAverageDays(rule.movingAverageDays)];
+}
+
+function getRuleMovingAverageSDays(rule) {
+  if (!rule || !rule.movingAverageS) {
+    return [];
+  }
+  if (Array.isArray(rule.movingAverageSDaysList) && rule.movingAverageSDaysList.length > 0) {
+    return rule.movingAverageSDaysList;
+  }
+  return [DEFAULT_MOVING_AVERAGE_DAYS];
 }
 
 function getRuleMovingAverageHoldBelowDays(rule) {
