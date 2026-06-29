@@ -43,11 +43,23 @@
       "code": "sh603986",
       "name": "兆易创新",
       "group": "自选"
+    },
+    {
+      "code": "AAPL",
+      "name": "Apple",
+      "group": "美股"
+    },
+    {
+      "code": "005930.KS",
+      "name": "Samsung Electronics",
+      "group": "韩股"
     }
   ],
   "marketMonitoring.groups": [
     "自选",
-    "观察"
+    "观察",
+    "美股",
+    "韩股"
   ],
   "marketMonitoring.sortBy": "changePercent",
   "marketMonitoring.sortDirection": "desc",
@@ -78,8 +90,18 @@
 - `510300`
 - `159915`
 - `600519.SH`
+- `AAPL`
+- `US:AAPL`
+- `NASDAQ:MSFT`
+- `BRK.B.US`
+- `005930.KS`
+- `035720.KQ`
+- `ks005930`
+- `kq035720`
 
-无交易所前缀时会按当前数据源的常见代码规则自动推断。
+无交易所前缀时，6 位数字会按 A 股规则自动推断，纯字母/美股 ticker 会按美股规则自动推断；韩国标的需要使用 `.KS`、`.KQ`、`ks` 或 `kq` 标明市场。
+
+美股和韩股搜索使用 Yahoo Finance 数据源，通常支持英文名称和代码搜索，但不保证支持中文名称搜索。例如搜索 `SK hynix`、`000660.KS` 或 `ks000660` 可以添加海力士，直接搜索 `海力士` 可能无法返回结果。
 
 ## 预警配置
 

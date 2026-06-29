@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.2.20",
+  "version": "0.3.1",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -169,7 +169,7 @@
               "group": "自选"
             }
           ],
-          "markdownDescription": "Market symbols to monitor. `code` supports prefixed forms like `sh600519` and `sz159915`, or six-digit codes such as `600519`, `510300`, `000001`, `159915`.",
+          "markdownDescription": "Market symbols to monitor. `code` supports A-share forms like `sh600519`, `sz159915`, `600519.SH`, or six-digit codes such as `600519`; US forms like `AAPL`, `US:AAPL`, `NASDAQ:MSFT`, `BRK.B.US`; and Korean forms like `005930.KS`, `035720.KQ`, `ks005930`, `kq035720`.",
           "items": {
             "type": "object",
             "required": [

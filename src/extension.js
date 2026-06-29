@@ -10,6 +10,7 @@ const CONFIG_SECTION = 'marketMonitoring';
 const VIEW_ID = 'marketMonitoring.quotesView';
 const QUOTE_CACHE_KEY = 'quoteCache.v1';
 const ALERT_NOTIFICATION_CACHE_KEY = 'alertNotificationCache.v1';
+const DIAGNOSTICS_BUILD = 'overseas-quotes-20260629';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
@@ -324,6 +325,8 @@ class MarketMonitor {
     this.databaseRestorePromise = this.restoreCachedDataFromDatabase('activation');
     this.logInfo('Activated', {
       extensionId: getExtensionId(context),
+      version: getExtensionVersion(context),
+      diagnosticsBuild: DIAGNOSTICS_BUILD,
       symbols: this.config.symbols.length,
       groups: this.config.groups.length,
       cachedQuotes: this.lastQuotes.length,
@@ -570,17 +573,29 @@ class MarketMonitor {
   async addSymbol(symbol) {
     const normalized = normalizeSymbolConfig(symbol);
     if (!normalized) {
+      this.logWarn('Add symbol rejected', {
+        reason: 'invalidSymbol',
+        input: sanitizeSymbolForLog(symbol)
+      });
       vscode.window.showWarningMessage('请输入有效的标的代码');
       return;
     }
 
     if (isBuiltInIndexCode(normalized.code)) {
+      this.logInfo('Add symbol skipped', {
+        reason: 'builtInIndex',
+        symbol: sanitizeSymbolForLog(normalized)
+      });
       vscode.window.showInformationMessage(`${normalized.name} 已在右下角指数列表中`);
       return;
     }
 
     const exists = hasSymbolInGroup(this.config.symbols, normalized.code, normalized.group);
     if (exists) {
+      this.logInfo('Add symbol skipped', {
+        reason: 'alreadyExistsInGroup',
+        symbol: sanitizeSymbolForLog(normalized)
+      });
       vscode.window.showInformationMessage(`${normalized.name} 已在 ${normalized.group} 分组中`);
       return;
     }
@@ -589,6 +604,11 @@ class MarketMonitor {
     const nextSymbols = [...this.config.symbols];
     nextSymbols.splice(insertIndex, 0, normalized);
     await updateConfiguredSymbols(nextSymbols);
+    this.logInfo('Symbol added', {
+      symbol: sanitizeSymbolForLog(normalized),
+      insertIndex,
+      totalSymbols: nextSymbols.length
+    });
     vscode.window.showInformationMessage(`已添加 ${normalized.name}`);
     this.refresh(true);
   }
@@ -602,6 +622,11 @@ class MarketMonitor {
 
     try {
       const results = await fetchSymbolSearchResults(keyword, this.config.requestTimeoutMs, this.database);
+      this.logInfo('Symbol search returned', {
+        keyword,
+        results: results.length,
+        samples: results.slice(0, 6).map(sanitizeSymbolForLog)
+      });
       this.provider.postSymbolSearchResults(requestId, keyword, results);
     } catch (error) {
       const message = getErrorMessage(error);
@@ -935,9 +960,9 @@ class MarketMonitor {
       return;
     }
 
-    const phase = getMarketPhase();
     const quoteSymbols = mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS);
     const realtimeQuoteSymbols = mergeQuoteSymbols(getRealtimeRefreshSymbols(this.config.symbols, this.collapsedGroups), INDEX_SYMBOLS);
+    const phase = getMarketPhase(quoteSymbols);
     const shouldRefreshCachedSnapshot = this.config.onlyDuringTradingTime
       && !phase.isActive
       && quoteSymbols.length > 0
@@ -949,11 +974,15 @@ class MarketMonitor {
     const shouldRefreshAlertFieldsSnapshot = this.config.enableAlerts
       && quoteSymbols.length > 0
       && needsAlertQuoteFieldsSnapshot(this.config.alerts, this.groupStatsQuotes);
+    const missingRealtimeQuotes = needsQuoteSnapshot(realtimeQuoteSymbols, this.lastQuotes);
+    const missingGroupStatsQuotes = needsQuoteSnapshot(quoteSymbols, this.groupStatsQuotes);
+    const realtimeQuoteIssues = getUnusableQuoteSamples(realtimeQuoteSymbols, this.lastQuotes);
+    const groupStatsQuoteIssues = getUnusableQuoteSamples(quoteSymbols, this.groupStatsQuotes);
     const shouldFetch = force
       || !this.config.onlyDuringTradingTime
       || phase.isActive
-      || needsQuoteSnapshot(realtimeQuoteSymbols, this.lastQuotes)
-      || needsQuoteSnapshot(quoteSymbols, this.groupStatsQuotes)
+      || missingRealtimeQuotes
+      || missingGroupStatsQuotes
       || shouldRefreshCachedSnapshot
       || shouldRefreshClosingSnapshot
       || shouldRefreshAlertFieldsSnapshot;
@@ -967,7 +996,10 @@ class MarketMonitor {
           phase: phase.name,
           quotes: this.lastQuotes.length,
           groupStatsQuotes: this.groupStatsQuotes.length,
-          cachedAt: this.lastUpdatedAt || ''
+          cachedAt: this.lastUpdatedAt || '',
+          markets: summarizeSymbolMarkets(quoteSymbols),
+          realtimeQuoteIssues,
+          groupStatsQuoteIssues
         });
         this.lastRefreshSkipKey = skipKey;
       }
@@ -991,12 +1023,15 @@ class MarketMonitor {
       realtimeCodes: realtimeQuoteSymbols.length,
       cachedQuotes: this.lastQuotes.length,
       cachedGroupStatsQuotes: this.groupStatsQuotes.length,
+      markets: summarizeSymbolMarkets(quoteSymbols),
+      realtimeQuoteIssues,
+      groupStatsQuoteIssues,
       reasons: {
         force,
         allDay: !this.config.onlyDuringTradingTime,
         activePhase: phase.isActive,
-        missingQuotes: needsQuoteSnapshot(realtimeQuoteSymbols, this.lastQuotes),
-        missingGroupStatsQuotes: needsQuoteSnapshot(quoteSymbols, this.groupStatsQuotes),
+        missingQuotes: missingRealtimeQuotes,
+        missingGroupStatsQuotes,
         staleCachedDate: shouldRefreshCachedSnapshot,
         afterCloseSnapshot: shouldRefreshClosingSnapshot,
         missingAlertFields: shouldRefreshAlertFieldsSnapshot
@@ -1995,7 +2030,7 @@ class QuotesViewProvider {
 
     .group-summary {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+      grid-template-columns: minmax(72px, 1fr);
       gap: 8px;
       padding: 5px 7px;
       border-top: 1px solid var(--border);
@@ -2011,8 +2046,21 @@ class QuotesViewProvider {
       text-align: right;
     }
 
-    .group-summary:not(.metrics-1) > span:first-child {
+    .group-summary.metrics-1 {
+      grid-template-columns: minmax(72px, 1fr) minmax(0, 1fr);
+    }
+
+    .group-summary.metrics-2 {
+      grid-template-columns: minmax(72px, 1fr) repeat(2, minmax(0, 1fr));
+    }
+
+    .group-summary.metrics-3 {
+      grid-template-columns: minmax(72px, 1fr) repeat(3, minmax(0, 1fr));
+    }
+
+    .group-summary > span:first-child {
       text-align: left;
+      color: var(--muted);
     }
 
     .sort-button {
@@ -2719,7 +2767,7 @@ class QuotesViewProvider {
       } else if (action === 'selectSymbol') {
         selectedSymbol = {
           code: button.dataset.code,
-          name: button.dataset.name
+          name: button.dataset.name || button.dataset.code
         };
         symbolSearchQuery = selectedSymbol.name + ' ' + selectedSymbol.code;
         renderActiveSymbolResults();
@@ -2727,6 +2775,12 @@ class QuotesViewProvider {
         const group = button.dataset.group || activeSymbolGroup || defaultGroupName;
         if (!selectedSymbol && symbolSearchResults.length === 1) {
           selectedSymbol = symbolSearchResults[0];
+        }
+        if (!selectedSymbol && symbolSearchQuery.trim()) {
+          selectedSymbol = {
+            code: symbolSearchQuery.trim(),
+            name: symbolSearchQuery.trim()
+          };
         }
 
         if (!selectedSymbol) {
@@ -3016,7 +3070,7 @@ class QuotesViewProvider {
         queryInput.value = symbolSearchQuery;
       }
       if (addButton) {
-        addButton.disabled = !selectedSymbol;
+        addButton.disabled = !(selectedSymbol || symbolSearchQuery.trim());
       }
       if (!container) {
         return;
@@ -3526,6 +3580,10 @@ class QuotesViewProvider {
       }
 
       const summary = calculateGroupPortfolioSummary(items);
+      if (!hasVisibleGroupSummaryValue(summary, visibleMetrics)) {
+        return '';
+      }
+
       const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
       const cells = visibleMetrics.map((metric) => {
         if (metric === 'totalAssets') {
@@ -3544,6 +3602,7 @@ class QuotesViewProvider {
       }).join('');
 
       return '<div class="group-summary metrics-' + visibleMetrics.length + '">' +
+        '<span title="' + escapeHtml(t('groupSummary')) + '">' + escapeHtml(t('groupSummary')) + '</span>' +
         cells +
       '</div>';
     }
@@ -3582,6 +3641,10 @@ class QuotesViewProvider {
         dailyProfit: profitCount > 0 ? dailyProfit : null,
         dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
       };
+    }
+
+    function hasVisibleGroupSummaryValue(summary, metrics) {
+      return metrics.some((metric) => summary[metric] !== null && summary[metric] !== undefined);
     }
 
     function formatLargeAmount(value, compact) {
@@ -3643,10 +3706,11 @@ class QuotesViewProvider {
     function renderGroupSymbolSearch(groupName) {
       const isActive = activeSymbolGroup === groupName;
       const query = isActive ? symbolSearchQuery : '';
+      const canAdd = isActive && (selectedSymbol || query.trim());
       return '<div class="symbol-form group-symbol-form">' +
         '<div class="symbol-search-row">' +
           '<input data-symbol-query="true" data-group="' + escapeHtml(groupName) + '" value="' + escapeHtml(query) + '" placeholder="' + escapeHtml(t('searchPlaceholder')) + '" autocomplete="off">' +
-          '<button class="secondary icon-button add-button" data-action="confirmAddSymbol" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('addToGroup')) + '" aria-label="' + escapeHtml(t('addToGroup')) + '" ' + (isActive && selectedSymbol ? '' : 'disabled') + '>＋</button>' +
+          '<button class="secondary icon-button add-button" data-action="confirmAddSymbol" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('addToGroup')) + '" aria-label="' + escapeHtml(t('addToGroup')) + '" ' + (canAdd ? '' : 'disabled') + '>＋</button>' +
         '</div>' +
         '<div class="symbol-results" data-symbol-results-group="' + escapeHtml(groupName) + '">' + (isActive ? renderSymbolResultsHtml() : '') + '</div>' +
       '</div>';
@@ -3730,8 +3794,9 @@ class QuotesViewProvider {
       const digits = snapshot.priceDecimalPlaces;
       const cellClass = 'quote-cell ' + getColumnClass(column);
       if (column === 'name') {
+        const displayName = quote.name || quote.code || '--';
         if (editing) {
-          return '<div class="' + cellClass + '">' + renderEditableText(quote, 'name') + '</div>';
+          return '<div class="' + cellClass + '">' + renderEditableText({ ...quote, name: displayName }, 'name') + '</div>';
         }
         const hasAlert = Array.isArray(quote.alerts) && quote.alerts.length > 0;
         const alertText = hasAlert ? quote.alerts.map((alert) => alert.label).join(' / ') : '';
@@ -3740,7 +3805,7 @@ class QuotesViewProvider {
           ? '<span class="holding-dot" role="img" title="' + heldLabel + '" aria-label="' + heldLabel + '"></span>'
           : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(quote.name) + '">' + holdingMarker + escapeHtml(quote.name) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
+          '<div class="name" title="' + escapeHtml(displayName) + '">' + holdingMarker + escapeHtml(displayName) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -4419,9 +4484,11 @@ function getConfigTarget(config, key) {
 }
 
 function toConfigSymbol(symbol) {
+  const code = normalizeCode(String(symbol && symbol.code || '')) || String(symbol && symbol.code || '').trim();
+  const name = String(symbol && symbol.name || code).trim() || code;
   const configSymbol = {
-    code: symbol.code,
-    name: symbol.name,
+    code,
+    name,
     group: symbol.group
   };
 
@@ -4451,6 +4518,18 @@ function normalizeSymbolConfig(item) {
     group: String(item.group || DEFAULT_GROUP).trim() || DEFAULT_GROUP,
     cost: optionalNumber(item.cost),
     holding: optionalNumber(item.holding)
+  };
+}
+
+function sanitizeSymbolForLog(symbol) {
+  if (!symbol || typeof symbol !== 'object') {
+    return symbol;
+  }
+  return {
+    code: symbol.code || '',
+    name: symbol.name || '',
+    group: symbol.group || '',
+    market: symbol.code ? getCodeMarketLabel(symbol.code) : ''
   };
 }
 
@@ -5238,6 +5317,16 @@ function normalizeCode(value) {
     return `${exchange}${suffix[1]}`;
   }
 
+  const koreaSymbol = normalizeKoreaCode(cleaned);
+  if (koreaSymbol) {
+    return koreaSymbol;
+  }
+
+  const usSymbol = normalizeUsCode(cleaned);
+  if (usSymbol) {
+    return usSymbol;
+  }
+
   if (!/^\d{6}$/.test(cleaned)) {
     return '';
   }
@@ -5254,6 +5343,57 @@ function normalizeCode(value) {
     return `bj${cleaned}`;
   }
 
+  return '';
+}
+
+function normalizeUsCode(cleaned) {
+  const usPatterns = [
+    /^(?:us[:.-]?)([a-z][a-z0-9.-]{0,9})$/,
+    /^(?:nasdaq|nyse|amex|arca|bats):([a-z][a-z0-9.-]{0,9})$/,
+    /^([a-z][a-z0-9.-]{0,9})\.(?:us|nasdaq|nyse|amex|arca|bats)$/
+  ];
+  for (const pattern of usPatterns) {
+    const match = cleaned.match(pattern);
+    if (match) {
+      return toInternalUsCode(match[1]);
+    }
+  }
+
+  if (/^[a-z][a-z0-9.-]{0,9}$/.test(cleaned) && /[a-z]/.test(cleaned)) {
+    return toInternalUsCode(cleaned);
+  }
+  return '';
+}
+
+function toInternalUsCode(ticker) {
+  const normalized = String(ticker || '').toLowerCase().replace(/\./g, '-').replace(/[^a-z0-9-]/g, '');
+  return normalized ? `us${normalized}` : '';
+}
+
+function normalizeKoreaCode(cleaned) {
+  const koreaPatterns = [
+    /^(ks|kq)(\d{6})$/,
+    /^kr[:.-]?(ks|kq)[:.-]?(\d{6})$/,
+    /^(?:kospi|krx):(\d{6})$/,
+    /^(?:kosdaq):(\d{6})$/,
+    /^(\d{6})\.(ks|kq)$/
+  ];
+  for (const pattern of koreaPatterns) {
+    const match = cleaned.match(pattern);
+    if (!match) {
+      continue;
+    }
+    if (pattern.source.includes('kosdaq')) {
+      return `kq${match[1]}`;
+    }
+    if (pattern.source.includes('kospi') || pattern.source.includes('krx')) {
+      return `ks${match[1]}`;
+    }
+    if (/^\d{6}$/.test(match[1] || '')) {
+      return `${match[2]}${match[1]}`;
+    }
+    return `${match[1]}${match[2]}`;
+  }
   return '';
 }
 
@@ -5427,125 +5567,34 @@ async function fetchQuotes(symbols, timeoutMs, log, database) {
 }
 
 async function fetchRawQuotes(codes, timeoutMs, log) {
-  const providers = [
-    {
-      name: '新浪',
-      url: (query) => `https://hq.sinajs.cn/list=${query}`,
-      headers: {
-        Referer: 'https://finance.sina.com.cn/',
-        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-      },
-      parse: parseSinaResponse
-    },
-    {
-      name: '腾讯',
-      url: (query) => `https://qt.gtimg.cn/q=${query}`,
-      headers: {
-        Referer: 'https://gu.qq.com/',
-        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-      },
-      parse: parseTencentResponse
-    }
-  ];
-  const query = codes.join(',');
+  const providers = getQuoteProviders();
   const mergedQuotes = new Map();
   const errors = [];
 
   for (const provider of providers) {
-    try {
-      const body = await requestText(provider.url(query), timeoutMs, provider.headers);
-      const quotes = provider.parse(body);
+    const result = await fetchProviderQuotes(provider, codes, timeoutMs);
+    if (result.skipped) {
       if (log) {
-        log('Quote provider returned', {
+        log('Quote provider skipped', {
           provider: provider.name,
+          reason: 'noSupportedCodes',
           requested: codes.length,
-          returned: quotes.size,
-          usable: countUsableCodesFromMap(quotes, codes)
+          details: result.details
         });
       }
-
-      for (const code of codes) {
-        if (mergedQuotes.has(code)) {
-          continue;
-        }
-
-        const quote = quotes.get(code);
-        if (isUsableQuote(quote)) {
-          mergedQuotes.set(code, quote);
-        }
-      }
-
-      if (codes.every((code) => mergedQuotes.has(code))) {
-        return mergedQuotes;
-      }
-
-      if (quotes.size === 0) {
-        errors.push(`${provider.name}: 未返回有效行情`);
-      }
-    } catch (error) {
-      if (log) {
-        log('Quote provider failed', {
-          provider: provider.name,
-          error: getErrorMessage(error)
-        });
-      }
-      errors.push(`${provider.name}: ${getErrorMessage(error)}`);
+      continue;
     }
-  }
-
-  if (mergedQuotes.size > 0) {
-    return mergedQuotes;
-  }
-
-  throw new Error(`行情请求失败：${errors.join('；')}`);
-}
-
-async function fetchRawQuotesConcurrent(codes, timeoutMs, log) {
-  const providers = [
-    {
-      name: '新浪',
-      url: (query) => `https://hq.sinajs.cn/list=${query}`,
-      headers: {
-        Referer: 'https://finance.sina.com.cn/',
-        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-      },
-      parse: parseSinaResponse
-    },
-    {
-      name: '腾讯',
-      url: (query) => `https://qt.gtimg.cn/q=${query}`,
-      headers: {
-        Referer: 'https://gu.qq.com/',
-        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-      },
-      parse: parseTencentResponse
-    }
-  ];
-  const query = codes.join(',');
-  const mergedQuotes = new Map();
-  const errors = [];
-
-  if (log) {
-    log('Quote providers started', {
-      providers: providers.map((provider) => provider.name),
-      requested: codes.length
-    });
-  }
-
-  const pending = providers.map((provider) => fetchProviderQuotes(provider, query, timeoutMs));
-  while (pending.length > 0) {
-    const { index, result } = await Promise.race(pending.map((promise, index) => promise.then((result) => ({ index, result }))));
-    pending.splice(index, 1);
 
     if (result.error) {
       if (log) {
         log('Quote provider failed', {
-          provider: result.provider,
+          provider: provider.name,
+          routedCodes: result.codes.length,
           elapsedMs: result.elapsedMs,
           error: result.error
         });
       }
-      errors.push(`${result.provider}: ${result.error}`);
+      errors.push(`${provider.name}: ${result.error}`);
       continue;
     }
 
@@ -5553,14 +5602,16 @@ async function fetchRawQuotesConcurrent(codes, timeoutMs, log) {
     if (log) {
       log('Quote provider returned', {
         provider: result.provider,
-        requested: codes.length,
+        requested: result.codes.length,
+        totalRequested: codes.length,
         returned: quotes.size,
-        usable: countUsableCodesFromMap(quotes, codes),
-        elapsedMs: result.elapsedMs
+        usable: countUsableCodesFromMap(quotes, result.codes),
+        elapsedMs: result.elapsedMs,
+        details: result.details
       });
     }
 
-    for (const code of codes) {
+    for (const code of result.codes) {
       if (mergedQuotes.has(code)) {
         continue;
       }
@@ -5587,12 +5638,162 @@ async function fetchRawQuotesConcurrent(codes, timeoutMs, log) {
   throw new Error(`行情请求失败：${errors.join('；')}`);
 }
 
-async function fetchProviderQuotes(provider, query, timeoutMs) {
+async function fetchRawQuotesConcurrent(codes, timeoutMs, log) {
+  const providers = getQuoteProviders();
+  const mergedQuotes = new Map();
+  const errors = [];
+
+  if (log) {
+    log('Quote providers started', {
+      providers: providers.map((provider) => ({
+        name: provider.name,
+        routedCodes: getProviderCodes(provider, codes).length
+      })),
+      requested: codes.length,
+      markets: summarizeCodesByMarket(codes)
+    });
+  }
+
+  const pending = providers.map((provider) => fetchProviderQuotes(provider, codes, timeoutMs));
+  while (pending.length > 0) {
+    const { index, result } = await Promise.race(pending.map((promise, index) => promise.then((result) => ({ index, result }))));
+    pending.splice(index, 1);
+
+    if (result.skipped) {
+      if (log) {
+        log('Quote provider skipped', {
+          provider: result.provider,
+          reason: 'noSupportedCodes',
+          requested: codes.length,
+          details: result.details
+        });
+      }
+      continue;
+    }
+
+    if (result.error) {
+      if (log) {
+        log('Quote provider failed', {
+          provider: result.provider,
+          routedCodes: result.codes.length,
+          elapsedMs: result.elapsedMs,
+          error: result.error
+        });
+      }
+      errors.push(`${result.provider}: ${result.error}`);
+      continue;
+    }
+
+    const quotes = result.quotes;
+    if (log) {
+      log('Quote provider returned', {
+        provider: result.provider,
+        requested: result.codes.length,
+        totalRequested: codes.length,
+        returned: quotes.size,
+        usable: countUsableCodesFromMap(quotes, result.codes),
+        elapsedMs: result.elapsedMs,
+        details: result.details
+      });
+    }
+
+    for (const code of result.codes) {
+      if (mergedQuotes.has(code)) {
+        continue;
+      }
+
+      const quote = quotes.get(code);
+      if (isUsableQuote(quote)) {
+        mergedQuotes.set(code, quote);
+      }
+    }
+
+    if (codes.every((code) => mergedQuotes.has(code))) {
+      return mergedQuotes;
+    }
+
+    if (quotes.size === 0) {
+      errors.push(`${result.provider}: 未返回有效行情`);
+    }
+  }
+
+  if (mergedQuotes.size > 0) {
+    return mergedQuotes;
+  }
+
+  throw new Error(`行情请求失败：${errors.length > 0 ? errors.join('；') : '没有匹配的数据源'}`);
+}
+
+function getQuoteProviders() {
+  return [
+    {
+      name: '新浪',
+      supportsCode: isChinaCode,
+      url: (query) => `https://hq.sinajs.cn/list=${query}`,
+      headers: {
+        Referer: 'https://finance.sina.com.cn/',
+        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+      },
+      parse: parseSinaResponse
+    },
+    {
+      name: '腾讯',
+      supportsCode: isChinaCode,
+      url: (query) => `https://qt.gtimg.cn/q=${query}`,
+      headers: {
+        Referer: 'https://gu.qq.com/',
+        'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+      },
+      parse: parseTencentResponse
+    },
+    {
+      name: 'Yahoo Finance',
+      supportsCode: (code) => Boolean(toYahooSymbol(code)),
+      fetchCodes: fetchYahooQuotes
+    }
+  ];
+}
+
+function getProviderCodes(provider, codes) {
+  const supportsCode = typeof provider.supportsCode === 'function' ? provider.supportsCode : () => true;
+  return (codes || []).filter((code) => supportsCode(code));
+}
+
+async function fetchProviderQuotes(provider, codes, timeoutMs) {
   const startedAt = Date.now();
+  const routedCodes = getProviderCodes(provider, codes);
+  if (routedCodes.length === 0) {
+    return {
+      provider: provider.name,
+      codes: [],
+      quotes: new Map(),
+      details: {
+        requested: Array.isArray(codes) ? codes.length : 0,
+        routed: 0
+      },
+      elapsedMs: Date.now() - startedAt,
+      skipped: true,
+      error: ''
+    };
+  }
+
   try {
+    if (typeof provider.fetchCodes === 'function') {
+      const quotes = await provider.fetchCodes(routedCodes, timeoutMs);
+      return {
+        provider: provider.name,
+        codes: routedCodes,
+        quotes,
+        details: quotes && quotes.diagnostics ? quotes.diagnostics : undefined,
+        elapsedMs: Date.now() - startedAt,
+        error: ''
+      };
+    }
+    const query = routedCodes.join(',');
     const body = await requestText(provider.url(query), timeoutMs, provider.headers);
     return {
       provider: provider.name,
+      codes: routedCodes,
       quotes: provider.parse(body),
       elapsedMs: Date.now() - startedAt,
       error: ''
@@ -5600,11 +5801,117 @@ async function fetchProviderQuotes(provider, query, timeoutMs) {
   } catch (error) {
     return {
       provider: provider.name,
+      codes: routedCodes,
       quotes: new Map(),
       elapsedMs: Date.now() - startedAt,
       error: getErrorMessage(error)
     };
   }
+}
+
+async function fetchYahooQuotes(codes, timeoutMs) {
+  const supportedCodes = (codes || []).filter((code) => Boolean(toYahooSymbol(code)));
+  const diagnostics = {
+    requested: Array.isArray(codes) ? codes.length : 0,
+    supported: supportedCodes.length,
+    samples: supportedCodes.slice(0, 8).map((code) => ({ code, yahooSymbol: toYahooSymbol(code) })),
+    failures: []
+  };
+  if (supportedCodes.length === 0) {
+    const emptyQuotes = new Map();
+    emptyQuotes.diagnostics = diagnostics;
+    return emptyQuotes;
+  }
+
+  const quotes = new Map();
+  const tasks = supportedCodes.map((code) => async () => {
+    const quote = await fetchYahooQuote(code, timeoutMs).catch((error) => {
+      diagnostics.failures.push({ code, yahooSymbol: toYahooSymbol(code), error: getErrorMessage(error) });
+      return null;
+    });
+    if (quote) {
+      quotes.set(code, quote);
+    }
+  });
+  await runLimited(tasks, 4);
+  diagnostics.returned = quotes.size;
+  diagnostics.failures = diagnostics.failures.slice(0, 8);
+  quotes.diagnostics = diagnostics;
+  return quotes;
+}
+
+async function fetchYahooQuote(code, timeoutMs) {
+  const yahooSymbol = toYahooSymbol(code);
+  if (!yahooSymbol) {
+    return null;
+  }
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=1d&interval=1m`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs || 10000, 3000), 20000), {
+    Referer: 'https://finance.yahoo.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+  return parseYahooChartQuote(code, body);
+}
+
+function parseYahooChartQuote(code, body) {
+  const parsed = JSON.parse(body);
+  const result = parsed && parsed.chart && Array.isArray(parsed.chart.result) ? parsed.chart.result[0] : null;
+  if (!result || !result.meta) {
+    return null;
+  }
+
+  const meta = result.meta;
+  const quote = result.indicators && Array.isArray(result.indicators.quote) ? result.indicators.quote[0] : null;
+  const latest = optionalNumber(meta.regularMarketPrice);
+  const previousClose = optionalNumber(meta.chartPreviousClose) || optionalNumber(meta.previousClose) || optionalNumber(meta.regularMarketPreviousClose);
+  const open = latestFiniteValue(quote && quote.open);
+  const high = latestFiniteValue(quote && quote.high);
+  const low = latestFiniteValue(quote && quote.low);
+  const volume = sumFiniteValues(quote && quote.volume);
+  const amount = Number.isFinite(latest) && volume > 0 ? latest * volume : null;
+  const price = latest !== null ? latest : latestFiniteValue(quote && quote.close);
+  const change = price !== null && previousClose !== null && previousClose > 0 ? price - previousClose : null;
+  const changePercent = change !== null && previousClose > 0 ? (change / previousClose) * 100 : null;
+  const time = formatQuoteTime(optionalNumber(meta.regularMarketTime), getCodeTimeZone(code));
+
+  return {
+    price,
+    open,
+    high,
+    low,
+    previousClose,
+    change,
+    changePercent,
+    volume: volume > 0 ? volume : null,
+    amount,
+    intradayVwap: null,
+    time,
+    status: price === null ? '无成交' : ''
+  };
+}
+
+function latestFiniteValue(values) {
+  if (!Array.isArray(values)) {
+    return null;
+  }
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = optionalNumber(values[index]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function sumFiniteValues(values) {
+  if (!Array.isArray(values)) {
+    return 0;
+  }
+  return values.reduce((sum, value) => {
+    const parsed = optionalNumber(value);
+    return parsed === null ? sum : sum + parsed;
+  }, 0);
 }
 
 async function fetchSymbolSearchResults(keyword, timeoutMs, database) {
@@ -5620,12 +5927,9 @@ async function fetchSymbolSearchResults(keyword, timeoutMs, database) {
     }
   }
 
-  const url = `http://suggest3.sinajs.cn/suggest/type=&key=${encodeURIComponent(normalizedKeyword)}`;
-  const body = await requestText(url, Math.min(Math.max(timeoutMs, 3000), 10000), {
-    Referer: 'https://finance.sina.com.cn/',
-    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-  }, 'gb18030');
-  const results = parseSinaSuggestResponse(body);
+  const results = mergeSymbolSearchResults(
+    await Promise.all(getSymbolSearchTasks(normalizedKeyword, timeoutMs))
+  );
 
   if (results.length === 0) {
     const code = normalizeCode(normalizedKeyword);
@@ -5640,6 +5944,55 @@ async function fetchSymbolSearchResults(keyword, timeoutMs, database) {
     await database.upsertSymbolSearchResults(normalizedKeyword, results);
   }
   return results;
+}
+
+function getSymbolSearchTasks(keyword, timeoutMs) {
+  const code = normalizeCode(keyword);
+  if (code && toYahooSymbol(code)) {
+    return [fetchYahooSymbolSearchResults(keyword, timeoutMs).catch(() => [])];
+  }
+  if (code && isChinaCode(code)) {
+    return [fetchSinaSymbolSearchResults(keyword, timeoutMs).catch(() => [])];
+  }
+  return [
+    fetchSinaSymbolSearchResults(keyword, timeoutMs).catch(() => []),
+    fetchYahooSymbolSearchResults(keyword, timeoutMs).catch(() => [])
+  ];
+}
+
+async function fetchSinaSymbolSearchResults(keyword, timeoutMs) {
+  const url = `http://suggest3.sinajs.cn/suggest/type=&key=${encodeURIComponent(keyword)}`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs, 3000), 10000), {
+    Referer: 'https://finance.sina.com.cn/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  }, 'gb18030');
+  return parseSinaSuggestResponse(body);
+}
+
+async function fetchYahooSymbolSearchResults(keyword, timeoutMs) {
+  const url = 'https://query1.finance.yahoo.com/v1/finance/search'
+    + `?q=${encodeURIComponent(keyword)}&quotesCount=12&newsCount=0`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs, 3000), 10000), {
+    Referer: 'https://finance.yahoo.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+  return parseYahooSearchResponse(body);
+}
+
+function mergeSymbolSearchResults(resultLists) {
+  const seen = new Set();
+  const merged = [];
+  for (const item of resultLists.flat()) {
+    if (!item || !item.code || seen.has(item.code)) {
+      continue;
+    }
+    seen.add(item.code);
+    merged.push(item);
+    if (merged.length >= 12) {
+      break;
+    }
+  }
+  return merged;
 }
 
 function parseSinaSuggestResponse(body) {
@@ -5671,13 +6024,114 @@ function parseSinaSuggestResponse(body) {
   return results;
 }
 
+function parseYahooSearchResponse(body) {
+  const parsed = JSON.parse(body);
+  const quotes = parsed && Array.isArray(parsed.quotes) ? parsed.quotes : [];
+  const results = [];
+  const seen = new Set();
+
+  for (const item of quotes) {
+    const code = normalizeYahooSearchSymbol(item && item.symbol, item && item.exchange);
+    if (!code || seen.has(code)) {
+      continue;
+    }
+
+    seen.add(code);
+    const name = String(item.shortname || item.longname || item.symbol || code).trim() || code;
+    results.push({
+      code,
+      name,
+      market: getCodeMarketLabel(code)
+    });
+
+    if (results.length >= 12) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+function normalizeYahooSearchSymbol(symbol, exchange) {
+  const yahooSymbol = String(symbol || '').trim().toUpperCase();
+  const yahooExchange = String(exchange || '').trim().toUpperCase();
+  if (!yahooSymbol) {
+    return '';
+  }
+
+  if (/^\d{6}\.KS$/.test(yahooSymbol)) {
+    return `ks${yahooSymbol.slice(0, 6)}`;
+  }
+  if (/^\d{6}\.KQ$/.test(yahooSymbol)) {
+    return `kq${yahooSymbol.slice(0, 6)}`;
+  }
+  if (['NMS', 'NGM', 'NCM', 'NYQ', 'ASE', 'PCX', 'BTS'].includes(yahooExchange)) {
+    return toInternalUsCode(yahooSymbol);
+  }
+  return '';
+}
+
 function getCodeMarketLabel(code) {
+  if (isUsCode(code)) {
+    return 'US';
+  }
+  if (isKoreaCode(code)) {
+    return String(code).slice(0, 2).toUpperCase() === 'KS' ? 'KR KOSPI' : 'KR KOSDAQ';
+  }
   const prefix = String(code || '').slice(0, 2).toUpperCase();
   return prefix || '';
 }
 
+function isChinaCode(code) {
+  return /^(sh|sz|bj)\d{6}$/.test(String(code || ''));
+}
+
+function isUsCode(code) {
+  return /^us[a-z0-9][a-z0-9-]{0,9}$/.test(String(code || ''));
+}
+
+function isKoreaCode(code) {
+  return /^(ks|kq)\d{6}$/.test(String(code || ''));
+}
+
+function toYahooSymbol(code) {
+  const normalized = String(code || '');
+  if (isUsCode(normalized)) {
+    return normalized.slice(2).toUpperCase();
+  }
+  if (isKoreaCode(normalized)) {
+    return `${normalized.slice(2)}.${normalized.slice(0, 2).toUpperCase()}`;
+  }
+  return '';
+}
+
+function getCodeTimeZone(code) {
+  if (isUsCode(code)) {
+    return 'America/New_York';
+  }
+  if (isKoreaCode(code)) {
+    return 'Asia/Seoul';
+  }
+  return 'Asia/Shanghai';
+}
+
+function formatQuoteTime(unixSeconds, timeZone) {
+  if (!Number.isFinite(unixSeconds) || unixSeconds <= 0) {
+    return '';
+  }
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date(unixSeconds * 1000));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.hour}:${values.minute}:${values.second}`;
+}
+
 function isUsableQuote(quote) {
-  return Boolean(quote && quote.price !== null);
+  return Boolean(quote && Number.isFinite(Number(quote.price)));
 }
 
 function countUsableQuotes(quotes) {
@@ -5957,7 +6411,7 @@ function hasMovingAverageSnapshotsForAllDays(snapshots, daysList) {
 }
 
 function calculateMovingAverageSnapshot(quote, bars, days) {
-  const today = getShanghaiDateString();
+  const today = getMarketDateString(quote.code);
   const previousCloses = bars
     .filter((bar) => bar.date !== today)
     .map((bar) => bar.close)
@@ -5998,13 +6452,9 @@ async function runLimited(tasks, limit) {
 
 async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache, database) {
   const secid = toEastmoneySecid(code);
-  if (!secid) {
-    return [];
-  }
-
   const normalizedLimit = Math.max(1, Math.trunc(limit));
-  const closeFinalized = isAfterShanghaiClose();
-  const cacheKey = `${getShanghaiDateString()}:${code}${closeFinalized ? ':closed' : ''}`;
+  const closeFinalized = isAfterMarketClose(code);
+  const cacheKey = `${getMarketDateString(code)}:${code}${closeFinalized ? ':closed' : ''}`;
   if (dailyKlineCache && dailyKlineCache.has(cacheKey)) {
     const cachedBars = dailyKlineCache.get(cacheKey);
     if (Array.isArray(cachedBars) && cachedBars.length >= normalizedLimit) {
@@ -6022,19 +6472,9 @@ async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache, data
     }
   }
 
-  const url = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-    + `?secid=${encodeURIComponent(secid)}`
-    + '&fields1=f1,f2,f3,f4,f5,f6'
-    + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58'
-    + '&klt=101&fqt=1&beg=0&end=20500101'
-    + `&lmt=${normalizedLimit}`;
-  const body = await requestText(url, Math.min(Math.max(timeoutMs || 10000, 3000), 20000), {
-    Referer: 'https://quote.eastmoney.com/',
-    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-  });
-  const parsed = JSON.parse(body);
-  const klines = parsed && parsed.data && Array.isArray(parsed.data.klines) ? parsed.data.klines : [];
-  const bars = klines.map(parseEastmoneyKline).filter(Boolean);
+  const bars = secid
+    ? await fetchEastmoneyDailyKlineBars(secid, normalizedLimit, timeoutMs)
+    : await fetchYahooDailyKlineBars(code, normalizedLimit, timeoutMs);
   if (database) {
     await database.upsertDailyKlineBars(code, bars);
   }
@@ -6043,6 +6483,64 @@ async function fetchDailyKlineBars(code, limit, timeoutMs, dailyKlineCache, data
     dailyKlineCache.set(cacheKey, bars);
   }
   return bars.slice(-normalizedLimit);
+}
+
+async function fetchEastmoneyDailyKlineBars(secid, limit, timeoutMs) {
+  const url = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
+    + `?secid=${encodeURIComponent(secid)}`
+    + '&fields1=f1,f2,f3,f4,f5,f6'
+    + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58'
+    + '&klt=101&fqt=1&beg=0&end=20500101'
+    + `&lmt=${limit}`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs || 10000, 3000), 20000), {
+    Referer: 'https://quote.eastmoney.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+  const parsed = JSON.parse(body);
+  const klines = parsed && parsed.data && Array.isArray(parsed.data.klines) ? parsed.data.klines : [];
+  return klines.map(parseEastmoneyKline).filter(Boolean);
+}
+
+async function fetchYahooDailyKlineBars(code, limit, timeoutMs) {
+  const yahooSymbol = toYahooSymbol(code);
+  if (!yahooSymbol) {
+    return [];
+  }
+
+  const rangeDays = Math.max(30, limit * 3);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=${rangeDays}d&interval=1d`;
+  const body = await requestText(url, Math.min(Math.max(timeoutMs || 10000, 3000), 20000), {
+    Referer: 'https://finance.yahoo.com/',
+    'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
+  });
+  return parseYahooDailyKlineBars(code, body).slice(-limit);
+}
+
+function parseYahooDailyKlineBars(code, body) {
+  const parsed = JSON.parse(body);
+  const result = parsed && parsed.chart && Array.isArray(parsed.chart.result) ? parsed.chart.result[0] : null;
+  const timestamps = result && Array.isArray(result.timestamp) ? result.timestamp : [];
+  const quote = result && result.indicators && Array.isArray(result.indicators.quote) ? result.indicators.quote[0] : null;
+  if (!quote) {
+    return [];
+  }
+
+  const timeZone = getCodeTimeZone(code);
+  return timestamps.map((timestamp, index) => {
+    const close = optionalNumber(quote.close && quote.close[index]);
+    if (close === null) {
+      return null;
+    }
+    return {
+      date: formatDateInTimeZone(new Date(timestamp * 1000), timeZone),
+      open: optionalNumber(quote.open && quote.open[index]),
+      close,
+      high: optionalNumber(quote.high && quote.high[index]),
+      low: optionalNumber(quote.low && quote.low[index]),
+      volume: optionalNumber(quote.volume && quote.volume[index]),
+      amount: null
+    };
+  }).filter(Boolean);
 }
 
 function parseEastmoneyKline(row) {
@@ -6153,7 +6651,7 @@ function addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAve
 }
 
 function addMovingAverageHoldBelowAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
-  if (!rule.movingAverageHoldBelow || !isAfterShanghaiClose()) {
+  if (!rule.movingAverageHoldBelow || !isAfterMarketClose(quote.code)) {
     return;
   }
 
@@ -6221,7 +6719,7 @@ function addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movin
 }
 
 function addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, movingAverageSnapshots, priceDecimalPlaces) {
-  if (!rule.movingAverageHoldAbove || !isAfterShanghaiClose()) {
+  if (!rule.movingAverageHoldAbove || !isAfterMarketClose(quote.code)) {
     return;
   }
 
@@ -7329,8 +7827,51 @@ function needsQuoteSnapshot(symbols, quotes) {
     return false;
   }
 
-  const quotedCodes = new Set(quotes.map((quote) => quote.code));
-  return symbols.some((symbol) => !quotedCodes.has(symbol.code));
+  const quoteByCode = new Map(quotes.map((quote) => [quote.code, quote]));
+  return symbols.some((symbol) => !isUsableQuote(quoteByCode.get(symbol.code)));
+}
+
+function getUnusableQuoteSamples(symbols, quotes, limit = 8) {
+  if (!Array.isArray(symbols) || symbols.length === 0) {
+    return [];
+  }
+  const quoteByCode = new Map((quotes || []).map((quote) => [quote.code, quote]));
+  const samples = [];
+  for (const symbol of symbols) {
+    if (!symbol || !symbol.code) {
+      continue;
+    }
+    const quote = quoteByCode.get(symbol.code);
+    if (isUsableQuote(quote)) {
+      continue;
+    }
+    samples.push({
+      code: symbol.code,
+      name: symbol.name || '',
+      market: getCodeMarketLabel(symbol.code),
+      reason: quote ? `unusablePrice:${quote.price === undefined ? 'undefined' : quote.price}` : 'missingQuote'
+    });
+    if (samples.length >= limit) {
+      break;
+    }
+  }
+  return samples;
+}
+
+function summarizeSymbolMarkets(symbols) {
+  return (symbols || []).reduce((summary, symbol) => {
+    const market = getCodeMarketKind(symbol && symbol.code);
+    summary[market] = (summary[market] || 0) + 1;
+    return summary;
+  }, {});
+}
+
+function summarizeCodesByMarket(codes) {
+  return (codes || []).reduce((summary, code) => {
+    const market = getCodeMarketKind(code);
+    summary[market] = (summary[market] || 0) + 1;
+    return summary;
+  }, {});
 }
 
 function needsAlertQuoteFieldsSnapshot(rules, quotes) {
@@ -7357,11 +7898,25 @@ function shouldRefreshAfterCloseSnapshot(lastUpdatedDate, lastUpdatedAt) {
 }
 
 function isAfterShanghaiClose() {
-  const now = getShanghaiTimeParts();
+  return isAfterMarketCloseForTimeZone('Asia/Shanghai', 15 * 60);
+}
+
+function isAfterMarketClose(code) {
+  if (isUsCode(code)) {
+    return isAfterMarketCloseForTimeZone('America/New_York', 16 * 60);
+  }
+  if (isKoreaCode(code)) {
+    return isAfterMarketCloseForTimeZone('Asia/Seoul', 15 * 60 + 30);
+  }
+  return isAfterShanghaiClose();
+}
+
+function isAfterMarketCloseForTimeZone(timeZone, closeMinutes) {
+  const now = getTimeParts(timeZone);
   if (now.weekday === 6 || now.weekday === 7) {
     return false;
   }
-  return now.hour * 60 + now.minute > 15 * 60;
+  return now.hour * 60 + now.minute > closeMinutes;
 }
 
 function parseTimeToMinutes(value) {
@@ -7612,13 +8167,14 @@ function groupQuotes(quotes, configuredGroups, configuredSymbols, alerts, sortBy
     const statsQuote = statsQuoteByCode.get(symbol.code);
     const displayQuote = quote && statsQuote ? mergeQuoteDisplayFields(quote, statsQuote) : quote || statsQuote;
     const item = displayQuote ? {
-      ...displayQuote,
-      name: symbol.name,
-      group: symbol.group,
-      cost: symbol.cost,
-      holding: symbol.holding
+        ...displayQuote,
+        name: symbol.name || symbol.code,
+        group: symbol.group,
+        cost: symbol.cost,
+        holding: symbol.holding
     } : {
       ...symbol,
+      name: symbol.name || symbol.code,
       price: null,
       previousClose: null,
       change: null,
@@ -8021,7 +8577,8 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
     }
 
     const summary = calculateGroupPortfolioSummaryValue(group.items);
-    rows.push([
+    if (hasGroupPortfolioSummaryValue(summary)) {
+      rows.push([
       group.name,
       '汇总',
       '',
@@ -8034,7 +8591,8 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
       '',
       '',
       ''
-    ]);
+      ]);
+    }
   }
 
   return rows;
@@ -8117,6 +8675,12 @@ function calculateGroupPortfolioSummaryValue(items) {
     dailyProfit: profitCount > 0 ? dailyProfit : null,
     dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
   };
+}
+
+function hasGroupPortfolioSummaryValue(summary) {
+  return summary.totalAssets !== null
+    || summary.dailyProfit !== null
+    || summary.dailyProfitPercent !== null;
 }
 
 function toCsv(rows) {
@@ -8308,7 +8872,41 @@ function numericSortValue(quote, sortBy) {
   return value === null ? Number.NEGATIVE_INFINITY : value;
 }
 
-function getMarketPhase() {
+function getMarketPhase(symbols = []) {
+  const markets = Array.from(new Set((symbols || []).map((symbol) => getCodeMarketKind(symbol && symbol.code))));
+  const phases = (markets.length > 0 ? markets : ['china']).map(getMarketKindPhase);
+  const activePhase = phases.find((phase) => phase.isActive);
+  if (activePhase) {
+    return activePhase;
+  }
+  return phases[0] || getMarketKindPhase('china');
+}
+
+function getMarketKindPhase(kind) {
+  if (kind === 'us') {
+    return getSessionPhase('美股交易时段', '美股休市', getTimeParts('America/New_York'), [
+      [9 * 60 + 30, 16 * 60]
+    ]);
+  }
+  if (kind === 'korea') {
+    return getSessionPhase('韩股交易时段', '韩股休市', getTimeParts('Asia/Seoul'), [
+      [9 * 60, 15 * 60 + 30]
+    ]);
+  }
+  return getChinaMarketPhase();
+}
+
+function getCodeMarketKind(code) {
+  if (isUsCode(code)) {
+    return 'us';
+  }
+  if (isKoreaCode(code)) {
+    return 'korea';
+  }
+  return 'china';
+}
+
+function getChinaMarketPhase() {
   const now = getShanghaiTimeParts();
   if (now.weekday === 6 || now.weekday === 7) {
     return { name: '休市', isActive: false };
@@ -8337,20 +8935,41 @@ function getMarketPhase() {
   return { name: '非交易时段', isActive: false };
 }
 
+function getSessionPhase(activeName, closedName, now, sessions) {
+  if (now.weekday === 6 || now.weekday === 7) {
+    return { name: closedName, isActive: false };
+  }
+  const minutes = now.hour * 60 + now.minute;
+  const isActive = sessions.some(([start, end]) => minutes >= start && minutes <= end);
+  return { name: isActive ? activeName : closedName, isActive };
+}
+
 function getShanghaiDateString() {
+  return formatDateInTimeZone(new Date(), 'Asia/Shanghai');
+}
+
+function getMarketDateString(code) {
+  return formatDateInTimeZone(new Date(), getCodeTimeZone(code));
+}
+
+function formatDateInTimeZone(date, timeZone) {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
 
 function getShanghaiTimeParts() {
+  return getTimeParts('Asia/Shanghai');
+}
+
+function getTimeParts(timeZone) {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Shanghai',
+    timeZone,
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
@@ -8616,6 +9235,11 @@ function getExtensionId(context) {
     return `${packageJson.publisher}.${packageJson.name}`;
   }
   return 'local.market-monitoring';
+}
+
+function getExtensionVersion(context) {
+  const packageJson = context.extension && context.extension.packageJSON;
+  return packageJson && packageJson.version ? String(packageJson.version) : '';
 }
 
 module.exports = {

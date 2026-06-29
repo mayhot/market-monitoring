@@ -8,6 +8,25 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.1] - 2026-06-29
+
+### Added
+
+- Added United States and Korea symbol support through Yahoo Finance search, quote, and daily K-line data.
+- Added diagnostics logs for symbol search, symbol addition, refresh decisions, quote provider details, and malformed SQLite cache recovery.
+
+### Changed
+
+- Bumped the extension version from `0.2.20` to `0.3.1`.
+- Route quote and direct-code search requests by market so China symbols use China data providers and US/Korea symbols use Yahoo Finance only.
+
+### Fixed
+
+- Fixed overseas symbols such as `000660.KS` being treated as empty rows when cached quotes were missing or unusable.
+- Clarified the group summary row label so it is not mistaken for an empty symbol row.
+- Allowed direct symbol-code entry such as `000660.KS` from the add-symbol box without selecting a search result first.
+- Recreate malformed SQLite cache files automatically after backing them up.
+
 ## [0.2.20] - 2026-06-29
 
 ### Added

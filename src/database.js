@@ -11,6 +11,7 @@ class MarketDatabase {
     this.db = undefined;
     this.SQL = undefined;
     this.readyPromise = undefined;
+    this.resetPromise = undefined;
     this.writeQueue = Promise.resolve();
     this.dbPath = path.join(context.globalStorageUri.fsPath, DATABASE_FILE_NAME);
     this.wasmDirectory = path.join(context.extensionUri.fsPath, 'src', 'vendor', 'sql.js');
@@ -466,6 +467,7 @@ class MarketDatabase {
           database: this.dbPath,
           error: getErrorMessage(error)
         });
+        await this.resetMalformedDatabase(error, operation);
       }
     });
     this.writeQueue = next.catch(() => {});
@@ -483,8 +485,53 @@ class MarketDatabase {
         database: this.dbPath,
         error: getErrorMessage(error)
       });
+      await this.resetMalformedDatabase(error, operation);
       return fallback;
     }
+  }
+
+  async resetMalformedDatabase(error, operation) {
+    if (!isDatabaseCorruptionError(error)) {
+      return;
+    }
+    if (this.resetPromise) {
+      await this.resetPromise;
+      return;
+    }
+
+    this.resetPromise = (async () => {
+      const backupPath = `${this.dbPath}.corrupt-${formatFileTimestamp(new Date())}`;
+      try {
+        if (this.db) {
+          this.db.close();
+        }
+      } catch {}
+      this.db = undefined;
+      this.readyPromise = undefined;
+
+      try {
+        if (fs.existsSync(this.dbPath)) {
+          await fs.promises.rename(this.dbPath, backupPath);
+        }
+        this.logWarn('SQLite database was malformed and has been recreated', {
+          operation,
+          database: this.dbPath,
+          backup: backupPath
+        });
+        await this.ensureDatabase();
+      } catch (resetError) {
+        this.logWarn('SQLite database recreation failed', {
+          operation,
+          database: this.dbPath,
+          backup: backupPath,
+          error: getErrorMessage(resetError)
+        });
+      } finally {
+        this.resetPromise = undefined;
+      }
+    })();
+
+    await this.resetPromise;
   }
 
   async ensureDatabase() {
@@ -813,8 +860,15 @@ function sqlString(value) {
 }
 
 function getExchangeCode(code) {
-  const prefix = String(code || '').slice(0, 2);
-  return ['sh', 'sz', 'bj'].includes(prefix) ? prefix : '';
+  const normalized = String(code || '');
+  const prefix = normalized.slice(0, 2);
+  if (['sh', 'sz', 'bj', 'ks', 'kq'].includes(prefix)) {
+    return prefix;
+  }
+  if (/^us[a-z0-9][a-z0-9-]{0,9}$/.test(normalized)) {
+    return 'us';
+  }
+  return '';
 }
 
 function getMarketName(code) {
@@ -827,6 +881,15 @@ function getMarketName(code) {
   }
   if (exchange === 'bj') {
     return 'Beijing';
+  }
+  if (exchange === 'ks') {
+    return 'Korea KOSPI';
+  }
+  if (exchange === 'kq') {
+    return 'Korea KOSDAQ';
+  }
+  if (exchange === 'us') {
+    return 'United States';
   }
   return '';
 }
@@ -853,6 +916,24 @@ function getErrorMessage(error) {
     return error.message;
   }
   return String(error);
+}
+
+function isDatabaseCorruptionError(error) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('database disk image is malformed') || message.includes('file is not a database');
+}
+
+function formatFileTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join('');
 }
 
 function formatLogLine(level, message, details) {
