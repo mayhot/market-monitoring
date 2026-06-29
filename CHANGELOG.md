@@ -8,11 +8,15 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
-## Unreleased
+## [0.2.20] - 2026-06-29
 
 ### Added
 
 - Added configurable `movingAverageS` alerts for prices falling below an N-day moving average by a configured downside offset.
+
+### Changed
+
+- Bumped the extension version from `0.2.19` to `0.2.20`.
 
 ## [0.2.19] - 2026-06-26
 
