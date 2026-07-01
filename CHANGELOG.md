@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.3] - 2026-07-01
+
+### Fixed
+
+- Fixed the quote view failing to render after adding group summary drawdown tooltips.
+
+### Changed
+
+- Bumped the extension version from `0.3.2` to `0.3.3`.
+
 ## [0.3.2] - 2026-07-01
 
 ### Added

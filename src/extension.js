@@ -3681,10 +3681,10 @@ class QuotesViewProvider {
       if (!summaryDrawdown || !Number.isFinite(Number(summaryDrawdown.percent))) {
         return t('totalAssets');
       }
-      return t('totalAssets') + '\n' +
-        t('groupSummaryHigh') + ': ' + formatLargeAmount(summaryDrawdown.high, false) + '\n' +
-        t('groupSummaryCurrent') + ': ' + formatLargeAmount(summaryDrawdown.current, false) + '\n' +
-        t('groupSummaryDrawdown') + ': ' + formatDecimal(summaryDrawdown.percent, 2) + '%\n' +
+      return t('totalAssets') + '\\n' +
+        t('groupSummaryHigh') + ': ' + formatLargeAmount(summaryDrawdown.high, false) + '\\n' +
+        t('groupSummaryCurrent') + ': ' + formatLargeAmount(summaryDrawdown.current, false) + '\\n' +
+        t('groupSummaryDrawdown') + ': ' + formatDecimal(summaryDrawdown.percent, 2) + '%\\n' +
         t('groupSummaryDrawdownThreshold') + ': ' + formatDecimal(summaryDrawdown.thresholdPercent, 2) + '%';
     }
 
