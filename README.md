@@ -75,6 +75,8 @@
     "fromThreshold": 2
   },
   "marketMonitoring.compactLargeAmounts": false,
+  "marketMonitoring.enableGroupSummaryDrawdownAlert": false,
+  "marketMonitoring.groupSummaryDrawdownThresholdPercent": 20,
   "marketMonitoring.showMarketBreadth": true,
   "marketMonitoring.marketBreadthRefreshIntervalSeconds": 300,
   "marketMonitoring.language": "auto",
@@ -232,6 +234,8 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 `threshold` 可自定义分档金额；`belowThreshold` 和 `fromThreshold` 支持 `0-6`。旧版数字配置仍可使用，例如 `2` 表示所有价格都按 `2` 位小数显示。
 
 `marketMonitoring.compactLargeAmounts` 控制超过 `10000` 的金额是否以 `W` 为单位展示，默认 `false`，即展示完整数值。开启后会影响分组汇总和导出 CSV 中的汇总金额。
+
+`marketMonitoring.enableGroupSummaryDrawdownAlert` 控制是否在分组总资产从当前运行期间最高点下跌超过阈值时显示回撤标记，默认 `false`。开启后，`marketMonitoring.groupSummaryDrawdownThresholdPercent` 控制下跌阈值，默认 `20`，即超过 `20%` 时在总资产右侧显示向下箭头和最高点下跌比例。
 
 ## 语言切换
 

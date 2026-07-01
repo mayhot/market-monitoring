@@ -14,6 +14,7 @@ const DIAGNOSTICS_BUILD = 'overseas-quotes-20260629';
 const DEFAULT_GROUP = '自选';
 const DEFAULT_LANGUAGE = 'auto';
 const DEFAULT_QUOTE_COLUMNS = ['name', 'price', 'changePercent'];
+const DEFAULT_GROUP_SUMMARY_DRAWDOWN_THRESHOLD_PERCENT = 20;
 const DEFAULT_MOVING_AVERAGE_DAYS = 20;
 const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60, 120];
 const MAX_MOVING_AVERAGE_DAYS = 250;
@@ -301,6 +302,7 @@ class MarketMonitor {
     this.groupStatsQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
     this.activeAlertKeys = new Set();
+    this.groupSummaryHighWaterMarks = new Map();
     this.marketBreadth = createEmptyMarketBreadth();
     this.lastMarketBreadthRefreshStartedAt = 0;
     const alertNotificationCache = readAlertNotificationCache(this.context.globalState);
@@ -360,7 +362,11 @@ class MarketMonitor {
   }
 
   reloadConfiguration(reason = 'configurationChanged') {
+    const previousDrawdownAlertEnabled = Boolean(this.config && this.config.enableGroupSummaryDrawdownAlert);
     this.config = readConfig();
+    if (previousDrawdownAlertEnabled && !this.config.enableGroupSummaryDrawdownAlert) {
+      this.groupSummaryHighWaterMarks.clear();
+    }
     this.persistConfiguredSymbols(reason);
     this.databaseRestorePromise = this.restoreCachedDataFromDatabase(reason);
     this.lastAlertEvaluationKey = '';
@@ -1324,6 +1330,8 @@ class MarketMonitor {
   }
 
   createSnapshot(phaseName, loading = false) {
+    const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes);
+    const groupsWithSummaryDrawdown = this.attachGroupSummaryDrawdowns(groups);
     return {
       running: this.running,
       loading,
@@ -1349,8 +1357,42 @@ class MarketMonitor {
       configuredSymbols: this.config.symbols,
       defaultIndexCode: DEFAULT_INDEX_CODE,
       indexes: buildIndexQuotes(this.lastQuotes),
-      groups: groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes)
+      groups: groupsWithSummaryDrawdown
     };
+  }
+
+  attachGroupSummaryDrawdowns(groups) {
+    if (!this.config.enableGroupSummaryDrawdownAlert) {
+      return groups;
+    }
+
+    const thresholdPercent = this.config.groupSummaryDrawdownThresholdPercent;
+    return groups.map((group) => {
+      const summary = calculateGroupPortfolioSummaryValue(group.items);
+      const totalAssets = Number(summary.totalAssets);
+      if (!Number.isFinite(totalAssets) || totalAssets <= 0) {
+        return {
+          ...group,
+          summaryDrawdown: null
+        };
+      }
+
+      const previousHigh = this.groupSummaryHighWaterMarks.get(group.name);
+      const high = Number.isFinite(previousHigh) && previousHigh > totalAssets ? previousHigh : totalAssets;
+      this.groupSummaryHighWaterMarks.set(group.name, high);
+      const drawdownPercent = high > 0 ? ((high - totalAssets) / high) * 100 : 0;
+      return {
+        ...group,
+        summaryDrawdown: drawdownPercent > thresholdPercent
+          ? {
+              high,
+              current: totalAssets,
+              percent: drawdownPercent,
+              thresholdPercent
+            }
+          : null
+      };
+    });
   }
 }
 
@@ -2064,6 +2106,13 @@ class QuotesViewProvider {
       color: var(--muted);
     }
 
+    .group-summary-drawdown {
+      margin-left: 4px;
+      color: var(--down);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
     .sort-button {
       width: 100%;
       min-height: 0;
@@ -2517,6 +2566,10 @@ class QuotesViewProvider {
         currentAssets: '当前总资产',
         dailyProfitSummary: '按涨跌额 * 持仓汇总',
         groupSummary: '分组汇总',
+        groupSummaryHigh: '最高点',
+        groupSummaryCurrent: '当前值',
+        groupSummaryDrawdown: '最高点下跌',
+        groupSummaryDrawdownThreshold: '下跌阈值',
         showMetric: '显示',
         totalAssets: '总资产',
         dailyProfit: '今日收益',
@@ -2595,6 +2648,10 @@ class QuotesViewProvider {
         currentAssets: 'Current assets',
         dailyProfitSummary: 'Summary by price change * holding',
         groupSummary: 'Group summary',
+        groupSummaryHigh: 'High',
+        groupSummaryCurrent: 'Current',
+        groupSummaryDrawdown: 'Drawdown from high',
+        groupSummaryDrawdownThreshold: 'Drawdown threshold',
         showMetric: 'Show',
         totalAssets: 'Total assets',
         dailyProfit: 'Today profit',
@@ -3509,7 +3566,7 @@ class QuotesViewProvider {
         const gridClass = getQuoteGridClass(columns);
         const header = collapsed ? '' : renderQuoteHeader(group.name, columns, editing, gridClass, sort);
         const items = collapsed ? '' : sortedItems.map((quote, itemIndex) => renderQuote(quote, snapshot, editing, columns, gridClass, itemIndex, sortedItems.length)).join('');
-        const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics, snapshot.compactLargeAmounts);
+        const summary = collapsed ? '' : renderGroupSummary(group.items, snapshot.groupSummaryMetrics, snapshot.compactLargeAmounts, group.summaryDrawdown);
         const table = collapsed ? '' : '<div class="quote-table">' + header + items + summary + '</div>';
         const footer = collapsed ? '' : renderGroupFooter(group.name, editing, adding);
         const stats = group.stats || { up: 0, down: 0, flat: 0, averageChangePercent: null };
@@ -3574,7 +3631,7 @@ class QuotesViewProvider {
       }));
     }
 
-    function renderGroupSummary(items, metrics, compactLargeAmounts) {
+    function renderGroupSummary(items, metrics, compactLargeAmounts, summaryDrawdown) {
       const visibleMetrics = normalizeGroupSummaryMetrics(metrics);
       if (visibleMetrics.length === 0) {
         return '';
@@ -3589,7 +3646,10 @@ class QuotesViewProvider {
       const cells = visibleMetrics.map((metric) => {
         if (metric === 'totalAssets') {
           const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets, compactLargeAmounts);
-          return '<span title="' + escapeHtml(t('totalAssets')) + '">' + escapeHtml(assets) + '</span>';
+          return '<span title="' + escapeHtml(getGroupSummaryTotalAssetsTitle(summaryDrawdown)) + '">' +
+            escapeHtml(assets) +
+            renderGroupSummaryDrawdown(summaryDrawdown) +
+          '</span>';
         }
         if (metric === 'dailyProfit') {
           const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit, compactLargeAmounts);
@@ -3606,6 +3666,26 @@ class QuotesViewProvider {
         '<span title="' + escapeHtml(t('groupSummary')) + '">' + escapeHtml(t('groupSummary')) + '</span>' +
         cells +
       '</div>';
+    }
+
+    function renderGroupSummaryDrawdown(summaryDrawdown) {
+      if (!summaryDrawdown || !Number.isFinite(Number(summaryDrawdown.percent))) {
+        return '';
+      }
+      return '<span class="group-summary-drawdown" aria-label="' + escapeHtml(t('groupSummaryDrawdown')) + '">' +
+        '↓ ' + escapeHtml(formatDecimal(summaryDrawdown.percent, 2) + '%') +
+      '</span>';
+    }
+
+    function getGroupSummaryTotalAssetsTitle(summaryDrawdown) {
+      if (!summaryDrawdown || !Number.isFinite(Number(summaryDrawdown.percent))) {
+        return t('totalAssets');
+      }
+      return t('totalAssets') + '\n' +
+        t('groupSummaryHigh') + ': ' + formatLargeAmount(summaryDrawdown.high, false) + '\n' +
+        t('groupSummaryCurrent') + ': ' + formatLargeAmount(summaryDrawdown.current, false) + '\n' +
+        t('groupSummaryDrawdown') + ': ' + formatDecimal(summaryDrawdown.percent, 2) + '%\n' +
+        t('groupSummaryDrawdownThreshold') + ': ' + formatDecimal(summaryDrawdown.thresholdPercent, 2) + '%';
     }
 
     function calculateGroupPortfolioSummary(items) {
@@ -4398,6 +4478,8 @@ function readConfig() {
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizePriceDecimalPlaces(config.get('priceDecimalPlaces', DEFAULT_PRICE_DECIMAL_PLACES)),
     compactLargeAmounts: Boolean(config.get('compactLargeAmounts', false)),
+    enableGroupSummaryDrawdownAlert: Boolean(config.get('enableGroupSummaryDrawdownAlert', false)),
+    groupSummaryDrawdownThresholdPercent: sanitizeNonNegativePercent(config.get('groupSummaryDrawdownThresholdPercent', DEFAULT_GROUP_SUMMARY_DRAWDOWN_THRESHOLD_PERCENT), DEFAULT_GROUP_SUMMARY_DRAWDOWN_THRESHOLD_PERCENT),
     rowHighlight: {
       upPercent: sanitizeRowHighlightPercent(config.get('rowHighlightUpPercent', 5)),
       downPercent: sanitizeRowHighlightPercent(config.get('rowHighlightDownPercent', 5))
@@ -9203,6 +9285,14 @@ function sanitizeDecimalPlacesWithFallback(value, fallback) {
 }
 
 function sanitizeNonNegativeNumberWithFallback(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function sanitizeNonNegativePercent(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return fallback;

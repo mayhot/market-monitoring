@@ -282,6 +282,17 @@
           "default": false,
           "description": "Display values greater than 10000 using W units in group summaries and exported summary rows."
         },
+        "marketMonitoring.enableGroupSummaryDrawdownAlert": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a drawdown marker next to group total assets when the value falls from its current high by more than the configured threshold."
+        },
+        "marketMonitoring.groupSummaryDrawdownThresholdPercent": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "description": "Drawdown percentage threshold for group total assets. The marker appears when total assets fall from the current high by more than this percentage."
+        },
         "marketMonitoring.language": {
           "type": "string",
           "default": "auto",
