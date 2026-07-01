@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.2] - 2026-07-01
+
+### Added
+
+- Added tiered price decimal-place settings with a configurable price threshold.
+- Added an optional group summary drawdown marker for total assets falling from the current high by a configurable threshold.
+
+### Changed
+
+- Bumped the extension version from `0.3.1` to `0.3.2`.
+
 ## [0.3.1] - 2026-06-29
 
 ### Added
