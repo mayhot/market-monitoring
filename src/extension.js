@@ -30,6 +30,7 @@ const DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_CONFIRM_MINUTES = 3;
 const DEFAULT_MINUTE_TREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_EPSILON_PERCENT = 0.03;
+const DEFAULT_PRICE_DECIMAL_PLACES = { threshold: 10, belowThreshold: 3, fromThreshold: 2 };
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'marketValue', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -1371,7 +1372,7 @@ class QuotesViewProvider {
       alerts: [],
       sortBy: 'marketValue',
       sortDirection: 'desc',
-      priceDecimalPlaces: 2,
+      priceDecimalPlaces: DEFAULT_PRICE_DECIMAL_PLACES,
       compactLargeAmounts: false,
       rowHighlight: {
         upPercent: 5,
@@ -3415,7 +3416,7 @@ class QuotesViewProvider {
       }
 
       const trend = selected.changePercent > 0 ? 'up' : selected.changePercent < 0 ? 'down' : 'flat';
-      const price = selected.price === null ? '--' : formatDecimal(selected.price, snapshot.priceDecimalPlaces);
+      const price = selected.price === null ? '--' : formatPriceDecimal(selected.price, snapshot.priceDecimalPlaces);
       const percent = selected.changePercent === null ? '--' : formatSigned(selected.changePercent, 2) + '%';
       indexQuote.className = snapshot.loading ? 'index-quote refreshing-index' : 'index-quote';
       indexQuote.innerHTML = '<span class="index-price">' + price + '</span> <span class="quote-change ' + trend + '">' + percent + '</span>';
@@ -3791,7 +3792,7 @@ class QuotesViewProvider {
     }
 
     function renderQuoteCell(column, quote, snapshot, trend, editing) {
-      const digits = snapshot.priceDecimalPlaces;
+      const priceDecimalPlaces = snapshot.priceDecimalPlaces;
       const cellClass = 'quote-cell ' + getColumnClass(column);
       if (column === 'name') {
         const displayName = quote.name || quote.code || '--';
@@ -3816,7 +3817,7 @@ class QuotesViewProvider {
         return '<div class="' + cellClass + ' code">' + escapeHtml(quote.code) + '</div>';
       }
       if (column === 'price') {
-        return '<div class="' + cellClass + ' price">' + (quote.price === null ? '--' : formatDecimal(quote.price, digits)) + '</div>';
+        return '<div class="' + cellClass + ' price">' + (quote.price === null ? '--' : formatPriceDecimal(quote.price, priceDecimalPlaces)) + '</div>';
       }
       if (column === 'changePercent') {
         const changePercent = getQuoteDisplayChangePercent(quote);
@@ -3824,7 +3825,7 @@ class QuotesViewProvider {
       }
       if (column === 'change') {
         const change = getQuoteDisplayChange(quote);
-        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (change === null ? '--' : formatSignedDecimal(change, digits)) + '</div>';
+        return '<div class="' + cellClass + ' quote-change ' + trend + '">' + (change === null ? '--' : formatSignedPriceDecimal(change, priceDecimalPlaces)) + '</div>';
       }
       if (column === 'cost') {
         return '<div class="' + cellClass + '">' + (editing ? renderEditableNumber(quote, 'cost', 3) : renderReadonlyNumber(quote.cost, 3)) + '</div>';
@@ -3834,7 +3835,7 @@ class QuotesViewProvider {
       }
       if (column === 'marketValue') {
         const value = calculateMarketValue(quote);
-        return '<div class="' + cellClass + '">' + (value === null ? '--' : formatDecimal(value, digits)) + '</div>';
+        return '<div class="' + cellClass + '">' + (value === null ? '--' : formatPriceDecimal(value, priceDecimalPlaces)) + '</div>';
       }
       if (column === 'position') {
         return '<div class="' + cellClass + '">' + (quote.position === null || quote.position === undefined ? '--' : formatDecimal(quote.position, 2) + '%') + '</div>';
@@ -3842,7 +3843,7 @@ class QuotesViewProvider {
       if (column === 'netProfit') {
         const profit = calculateNetProfit(quote);
         const profitTrend = profit > 0 ? 'up' : profit < 0 ? 'down' : 'flat';
-        return '<div class="' + cellClass + ' quote-change ' + profitTrend + '">' + (profit === null ? '--' : formatSignedDecimal(profit, digits)) + '</div>';
+        return '<div class="' + cellClass + ' quote-change ' + profitTrend + '">' + (profit === null ? '--' : formatSignedPriceDecimal(profit, priceDecimalPlaces)) + '</div>';
       }
       return '<div class="' + cellClass + '">--</div>';
     }
@@ -4258,6 +4259,51 @@ class QuotesViewProvider {
       return Number(value).toFixed(digits).replace(/\\.0+$/, '').replace(/(\\.\\d*?)0+$/, '$1');
     }
 
+    function formatPriceDecimal(value, priceDecimalPlaces) {
+      return formatDecimal(value, resolvePriceDecimalPlaces(value, priceDecimalPlaces));
+    }
+
+    function formatSignedPriceDecimal(value, priceDecimalPlaces) {
+      const formatted = formatPriceDecimal(value, priceDecimalPlaces);
+      return value > 0 ? '+' + formatted : formatted;
+    }
+
+    function resolvePriceDecimalPlaces(value, priceDecimalPlaces) {
+      const config = normalizePriceDecimalPlaces(priceDecimalPlaces);
+      const amount = Math.abs(Number(value));
+      return Number.isFinite(amount) && amount < config.threshold
+        ? config.belowThreshold
+        : config.fromThreshold;
+    }
+
+    function normalizePriceDecimalPlaces(value) {
+      if (Number.isInteger(Number(value))) {
+        const digits = clampDecimalPlaces(Number(value), 2);
+        return { threshold: 10, belowThreshold: digits, fromThreshold: digits };
+      }
+      if (!value || typeof value !== 'object') {
+        return { threshold: 10, belowThreshold: 3, fromThreshold: 2 };
+      }
+      return {
+        threshold: sanitizeNonNegativeNumber(value.threshold, 10),
+        belowThreshold: clampDecimalPlaces(value.belowThreshold ?? value.below10, 3),
+        fromThreshold: clampDecimalPlaces(value.fromThreshold ?? value.from10, 2)
+      };
+    }
+
+    function clampDecimalPlaces(value, fallback) {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed)) {
+        return fallback;
+      }
+      return Math.min(6, Math.max(0, parsed));
+    }
+
+    function sanitizeNonNegativeNumber(value, fallback) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+    }
+
     function formatInteger(value) {
       const parsed = Number(value);
       if (!Number.isFinite(parsed)) {
@@ -4350,7 +4396,7 @@ function readConfig() {
     showStatusBar: config.get('showStatusBar', false),
     sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
-    priceDecimalPlaces: sanitizeDecimalPlaces(config.get('priceDecimalPlaces', 2)),
+    priceDecimalPlaces: sanitizePriceDecimalPlaces(config.get('priceDecimalPlaces', DEFAULT_PRICE_DECIMAL_PLACES)),
     compactLargeAmounts: Boolean(config.get('compactLargeAmounts', false)),
     rowHighlight: {
       upPercent: sanitizeRowHighlightPercent(config.get('rowHighlightUpPercent', 5)),
@@ -6308,8 +6354,8 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
     return;
   }
 
-  const formattedValue = `${value.toFixed(digits)}${suffix}`;
-  const formattedThreshold = `${threshold.toFixed(digits)}${suffix}`;
+  const formattedValue = `${formatPriceDecimalFixed(value, digits)}${suffix}`;
+  const formattedThreshold = `${formatPriceDecimalFixed(threshold, digits)}${suffix}`;
   const alertLabel = `${label} ${formattedThreshold}`;
 
   alerts.push({
@@ -6598,8 +6644,8 @@ function addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movin
       continue;
     }
 
-    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedAverage = formatPriceDecimalFixed(snapshot.average, priceDecimalPlaces);
+    const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const alertLabel = `跌破${snapshot.days}日线 ${formattedAverage}`;
 
     alerts.push({
@@ -6631,9 +6677,9 @@ function addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAve
       continue;
     }
 
-    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-    const formattedThreshold = threshold.toFixed(priceDecimalPlaces);
-    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedAverage = formatPriceDecimalFixed(snapshot.average, priceDecimalPlaces);
+    const formattedThreshold = formatPriceDecimalFixed(threshold, priceDecimalPlaces);
+    const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const formattedOffsetPercent = formatPercentValue(offsetPercent);
     const alertLabel = `S预警 跌破${snapshot.days}日线下偏移${formattedOffsetPercent}% ${formattedThreshold}`;
 
@@ -6668,8 +6714,8 @@ function addMovingAverageHoldBelowAlertIfMet(alerts, quote, displayName, rule, m
       continue;
     }
 
-    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedAverage = formatPriceDecimalFixed(snapshot.average, priceDecimalPlaces);
+    const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const alertLabel = `失守${snapshot.days}日线 ${formattedAverage}`;
 
     alerts.push({
@@ -6702,8 +6748,8 @@ function addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movin
       continue;
     }
 
-    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedAverage = formatPriceDecimalFixed(snapshot.average, priceDecimalPlaces);
+    const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const alertLabel = `站上${snapshot.days}日线 ${formattedAverage}`;
 
     alerts.push({
@@ -6736,8 +6782,8 @@ function addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, m
       continue;
     }
 
-    const formattedAverage = snapshot.average.toFixed(priceDecimalPlaces);
-    const formattedValue = quote.price.toFixed(priceDecimalPlaces);
+    const formattedAverage = formatPriceDecimalFixed(snapshot.average, priceDecimalPlaces);
+    const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const alertLabel = `站稳${snapshot.days}日线 ${formattedAverage}`;
 
     alerts.push({
@@ -6903,7 +6949,7 @@ function addBearishMovingAverageAlertIfMet(alerts, quote, displayName, rule, bar
     code: quote.code,
     name: displayName,
     label: `均线空头排列 MA${rule.bearishMovingAverageShortDays}<MA${rule.bearishMovingAverageMidDays}<MA${rule.bearishMovingAverageLongDays}`,
-    message: `${displayName} 均线空头排列，MA${rule.bearishMovingAverageShortDays} ${shortAverage.toFixed(priceDecimalPlaces)} < MA${rule.bearishMovingAverageMidDays} ${midAverage.toFixed(priceDecimalPlaces)} < MA${rule.bearishMovingAverageLongDays} ${longAverage.toFixed(priceDecimalPlaces)}`
+    message: `${displayName} 均线空头排列，MA${rule.bearishMovingAverageShortDays} ${formatPriceDecimalFixed(shortAverage, priceDecimalPlaces)} < MA${rule.bearishMovingAverageMidDays} ${formatPriceDecimalFixed(midAverage, priceDecimalPlaces)} < MA${rule.bearishMovingAverageLongDays} ${formatPriceDecimalFixed(longAverage, priceDecimalPlaces)}`
   });
 }
 
@@ -6995,11 +7041,11 @@ function addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDeci
   }
 
   alerts.push({
-    key: `${quote.code}:lowBreak:${rule.lowBreakDays}:${lowest.toFixed(priceDecimalPlaces)}`,
+    key: `${quote.code}:lowBreak:${rule.lowBreakDays}:${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`,
     code: quote.code,
     name: displayName,
-    label: `跌破${rule.lowBreakDays}日低点 ${lowest.toFixed(priceDecimalPlaces)}`,
-    message: `${displayName} 跌破${rule.lowBreakDays}日低点，当前 ${quote.price.toFixed(priceDecimalPlaces)}，前低 ${lowest.toFixed(priceDecimalPlaces)}`
+    label: `跌破${rule.lowBreakDays}日低点 ${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`,
+    message: `${displayName} 跌破${rule.lowBreakDays}日低点，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，前低 ${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`
   });
 }
 
@@ -7039,11 +7085,11 @@ function addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, pri
 
   const label = rule.bollingerBelow === 'lower' ? '跌破布林下轨' : '跌破布林中轨';
   alerts.push({
-    key: `${quote.code}:bollingerBelow:${rule.bollingerBelow}:${rule.bollingerDays}:${target.toFixed(priceDecimalPlaces)}`,
+    key: `${quote.code}:bollingerBelow:${rule.bollingerBelow}:${rule.bollingerDays}:${formatPriceDecimalFixed(target, priceDecimalPlaces)}`,
     code: quote.code,
     name: displayName,
-    label: `${label} ${target.toFixed(priceDecimalPlaces)}`,
-    message: `${displayName} ${label}，当前 ${quote.price.toFixed(priceDecimalPlaces)}，阈值 ${target.toFixed(priceDecimalPlaces)}`
+    label: `${label} ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`,
+    message: `${displayName} ${label}，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，阈值 ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`
   });
 }
 
@@ -7088,14 +7134,14 @@ function addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bar
   const alertLabel = `由涨转跌，高点回落 ${pullbackPercent.toFixed(2)}%`;
   const changePercentText = changePercent === null ? '' : `，涨跌幅 ${changePercent.toFixed(2)}%`;
   const priceLabel = useClosingPrice ? '收盘' : '当前';
-  const vwapText = Number.isFinite(quote.intradayVwap) ? `，VWAP ${quote.intradayVwap.toFixed(priceDecimalPlaces)}` : '';
+  const vwapText = Number.isFinite(quote.intradayVwap) ? `，VWAP ${formatPriceDecimalFixed(quote.intradayVwap, priceDecimalPlaces)}` : '';
   alerts.push({
     key: `${quote.code}:intradayHighPullback:${rule.intradayHighPullbackPercent}`,
     type: 'intradayHighPullback',
     code: quote.code,
     name: displayName,
     label: alertLabel,
-    message: `${displayName} 当日最高价高于开盘价后转为下跌，从最高点 ${currentBar.high.toFixed(priceDecimalPlaces)} 回落 ${pullbackPercent.toFixed(2)}%，开盘 ${currentBar.open.toFixed(priceDecimalPlaces)}，${priceLabel} ${currentPrice.toFixed(priceDecimalPlaces)}${vwapText}${changePercentText}`
+    message: `${displayName} 当日最高价高于开盘价后转为下跌，从最高点 ${formatPriceDecimalFixed(currentBar.high, priceDecimalPlaces)} 回落 ${pullbackPercent.toFixed(2)}%，开盘 ${formatPriceDecimalFixed(currentBar.open, priceDecimalPlaces)}，${priceLabel} ${formatPriceDecimalFixed(currentPrice, priceDecimalPlaces)}${vwapText}${changePercentText}`
   });
 }
 
@@ -8565,14 +8611,14 @@ function buildCsvRows(groups, priceDecimalPlaces, compactLargeAmounts = false) {
         quote.name,
         quote.alias || toPinyin(quote.name),
         quote.code,
-        formatOptionalDecimal(quote.price, priceDecimalPlaces),
+        formatOptionalPriceDecimal(quote.price, priceDecimalPlaces),
         formatOptionalSignedPercent(quote.changePercent),
-        formatOptionalSignedDecimal(quote.change, priceDecimalPlaces),
+        formatOptionalSignedPriceDecimal(quote.change, priceDecimalPlaces),
         formatOptionalDecimal(quote.cost, 3),
         formatOptionalDecimal(quote.holding, 0),
-        formatOptionalDecimal(calculateMarketValue(quote), priceDecimalPlaces),
+        formatOptionalPriceDecimal(calculateMarketValue(quote), priceDecimalPlaces),
         formatOptionalPercent(calculatePositionValue(quote, positionTotal)),
-        formatOptionalSignedDecimal(calculateNetProfitValue(quote), priceDecimalPlaces)
+        formatOptionalSignedPriceDecimal(calculateNetProfitValue(quote), priceDecimalPlaces)
       ]);
     }
 
@@ -8714,6 +8760,25 @@ function formatOptionalSignedDecimal(value, digits) {
   return Number(value) > 0 ? `+${formatted}` : formatted;
 }
 
+function formatOptionalPriceDecimal(value, priceDecimalPlaces) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return '';
+  }
+  return formatPriceDecimalTrimmed(number, priceDecimalPlaces);
+}
+
+function formatOptionalSignedPriceDecimal(value, priceDecimalPlaces) {
+  const formatted = formatOptionalPriceDecimal(value, priceDecimalPlaces);
+  if (!formatted) {
+    return '';
+  }
+  return Number(value) > 0 ? `+${formatted}` : formatted;
+}
+
 function formatOptionalSignedPercent(value) {
   const formatted = formatOptionalDecimal(value, 2);
   if (!formatted) {
@@ -8751,6 +8816,22 @@ function formatOptionalSignedLargeAmount(value, compact = false) {
 
 function formatDecimalTrimmed(value, digits) {
   return Number(value).toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+}
+
+function formatPriceDecimalTrimmed(value, priceDecimalPlaces) {
+  return formatDecimalTrimmed(value, resolvePriceDecimalPlaces(value, priceDecimalPlaces));
+}
+
+function formatPriceDecimalFixed(value, priceDecimalPlaces) {
+  return Number(value).toFixed(resolvePriceDecimalPlaces(value, priceDecimalPlaces));
+}
+
+function resolvePriceDecimalPlaces(value, priceDecimalPlaces) {
+  const config = sanitizePriceDecimalPlaces(priceDecimalPlaces);
+  const amount = Math.abs(Number(value));
+  return Number.isFinite(amount) && amount < config.threshold
+    ? config.belowThreshold
+    : config.fromThreshold;
 }
 
 function formatAmountTrimmed(value, digits) {
@@ -9096,6 +9177,37 @@ function sanitizeDecimalPlaces(value) {
     return 2;
   }
   return Math.min(6, Math.max(0, parsed));
+}
+
+function sanitizePriceDecimalPlaces(value) {
+  if (Number.isInteger(Number(value))) {
+    const digits = sanitizeDecimalPlaces(value);
+    return { ...DEFAULT_PRICE_DECIMAL_PLACES, belowThreshold: digits, fromThreshold: digits };
+  }
+  if (!value || typeof value !== 'object') {
+    return DEFAULT_PRICE_DECIMAL_PLACES;
+  }
+  return {
+    threshold: sanitizeNonNegativeNumberWithFallback(value.threshold, DEFAULT_PRICE_DECIMAL_PLACES.threshold),
+    belowThreshold: sanitizeDecimalPlacesWithFallback(value.belowThreshold ?? value.below10, DEFAULT_PRICE_DECIMAL_PLACES.belowThreshold),
+    fromThreshold: sanitizeDecimalPlacesWithFallback(value.fromThreshold ?? value.from10, DEFAULT_PRICE_DECIMAL_PLACES.fromThreshold)
+  };
+}
+
+function sanitizeDecimalPlacesWithFallback(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    return fallback;
+  }
+  return Math.min(6, Math.max(0, parsed));
+}
+
+function sanitizeNonNegativeNumberWithFallback(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function sanitizeRowHighlightPercent(value) {

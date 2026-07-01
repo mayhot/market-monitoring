@@ -241,11 +241,41 @@
           "description": "Full-market rising, falling, and flat stock count refresh interval in seconds."
         },
         "marketMonitoring.priceDecimalPlaces": {
-          "type": "number",
-          "default": 2,
+          "type": [
+            "number",
+            "object"
+          ],
+          "default": {
+            "threshold": 10,
+            "belowThreshold": 3,
+            "fromThreshold": 2
+          },
           "minimum": 0,
           "maximum": 6,
-          "description": "Decimal places used for quote price display."
+          "properties": {
+            "threshold": {
+              "type": "number",
+              "default": 10,
+              "minimum": 0,
+              "description": "Price threshold used to choose decimal places."
+            },
+            "belowThreshold": {
+              "type": "number",
+              "default": 3,
+              "minimum": 0,
+              "maximum": 6,
+              "description": "Decimal places used when the absolute value is below the threshold."
+            },
+            "fromThreshold": {
+              "type": "number",
+              "default": 2,
+              "minimum": 0,
+              "maximum": 6,
+              "description": "Decimal places used when the absolute value is greater than or equal to the threshold."
+            }
+          },
+          "additionalProperties": false,
+          "markdownDescription": "Decimal places used for quote price display. Use a number for the legacy fixed behavior, or an object such as `{ \"threshold\": 10, \"belowThreshold\": 3, \"fromThreshold\": 2 }`."
         },
         "marketMonitoring.compactLargeAmounts": {
           "type": "boolean",

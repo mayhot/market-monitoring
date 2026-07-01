@@ -69,7 +69,11 @@
     "changePercent"
   ],
   "marketMonitoring.groupSummaryMetrics": [],
-  "marketMonitoring.priceDecimalPlaces": 2,
+  "marketMonitoring.priceDecimalPlaces": {
+    "threshold": 10,
+    "belowThreshold": 3,
+    "fromThreshold": 2
+  },
   "marketMonitoring.compactLargeAmounts": false,
   "marketMonitoring.showMarketBreadth": true,
   "marketMonitoring.marketBreadthRefreshIntervalSeconds": 300,
@@ -213,7 +217,19 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 ## 价格小数位
 
-`marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数，默认 `2`，支持 `0-6`。
+`marketMonitoring.priceDecimalPlaces` 控制标的和指数价格的小数位数。默认按金额分档：绝对值低于 `10` 时显示 `3` 位小数，大于等于 `10` 时显示 `2` 位小数。
+
+```json
+{
+  "marketMonitoring.priceDecimalPlaces": {
+    "threshold": 10,
+    "belowThreshold": 3,
+    "fromThreshold": 2
+  }
+}
+```
+
+`threshold` 可自定义分档金额；`belowThreshold` 和 `fromThreshold` 支持 `0-6`。旧版数字配置仍可使用，例如 `2` 表示所有价格都按 `2` 位小数显示。
 
 `marketMonitoring.compactLargeAmounts` 控制超过 `10000` 的金额是否以 `W` 为单位展示，默认 `false`，即展示完整数值。开启后会影响分组汇总和导出 CSV 中的汇总金额。
 
