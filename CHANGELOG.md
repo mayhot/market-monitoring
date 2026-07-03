@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.4] - 2026-07-03
+
+### Added
+
+- Added configurable EXPMA deviation alerts with `E12` quote-row badges and up/down direction arrows.
+
+### Changed
+
+- Bumped the extension version from `0.3.3` to `0.3.4`.
+
 ## [0.3.3] - 2026-07-01
 
 ### Fixed

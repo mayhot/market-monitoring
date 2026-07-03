@@ -147,6 +147,16 @@
       "movingAverageHoldAboveDays": [5, 10, 20, 60, 120]
     },
     {
+      "code": "sh600519",
+      "name": "EXPMA example",
+      "movingAverageBelow": false,
+      "movingAverageS": false,
+      "expmaDeviation": true,
+      "expmaDays": 12,
+      "expmaDeviationAbovePercent": 4,
+      "expmaDeviationBelowPercent": 4
+    },
+    {
       "code": "sz000001",
       "name": "trend risk example",
       "bearishMovingAverage": true,
@@ -176,6 +186,8 @@
 When `marketMonitoring.enableAlerts` is enabled, every configured symbol gets default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`, plus default `movingAverageS: true` alerts with `movingAverageSDays: 20` and `movingAverageSOffsetPercent: 4`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` or `movingAverageS: false` to disable those moving-average alerts for a symbol.
 
 `movingAverageS` triggers an "S预警" when the latest price is less than or equal to `MA(N) * (1 - X / 100)`. Use `movingAverageSDays` to configure N, and `movingAverageSOffsetPercent` to configure X.
+
+`expmaDeviation` triggers an EXPMA deviation alert when the latest price is at least `expmaDeviationAbovePercent` above `EXPMA(expmaDays)` or at least `expmaDeviationBelowPercent` below it. The default EXPMA window is `12`, both default thresholds are `4`, and the quote row badge shows `E12` plus an up or down arrow.
 
 Set `movingAverageHoldBelow: true` for close-confirmed "失守 N 日线" alerts using the same cross-down condition after market close. This downside confirmation alert is disabled by default; use `movingAverageHoldBelowDays` to choose its windows.
 

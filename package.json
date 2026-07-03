@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -623,6 +623,30 @@
                 "minimum": 0,
                 "maximum": 100,
                 "description": "Downside offset percentage used by movingAverageS. For example, 4 triggers when price is less than or equal to MA(N) * 0.96."
+              },
+              "expmaDeviation": {
+                "type": "boolean",
+                "default": false,
+                "description": "Trigger when latest price deviates above or below the configured EXPMA by the configured percentage."
+              },
+              "expmaDays": {
+                "type": "integer",
+                "default": 12,
+                "minimum": 1,
+                "maximum": 250,
+                "description": "EXPMA window for expmaDeviation."
+              },
+              "expmaDeviationAbovePercent": {
+                "type": "number",
+                "default": 4,
+                "minimum": 0,
+                "description": "Upper deviation percentage for expmaDeviation."
+              },
+              "expmaDeviationBelowPercent": {
+                "type": "number",
+                "default": 4,
+                "minimum": 0,
+                "description": "Lower deviation percentage for expmaDeviation."
               },
               "movingAverageHoldBelow": {
                 "type": "boolean",

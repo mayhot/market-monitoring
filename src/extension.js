@@ -19,6 +19,8 @@ const DEFAULT_MOVING_AVERAGE_DAYS = 20;
 const DEFAULT_MOVING_AVERAGE_ALERT_DAYS = [5, 10, 20, 60, 120];
 const MAX_MOVING_AVERAGE_DAYS = 250;
 const DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT = 4;
+const DEFAULT_EXPMA_DAYS = 12;
+const DEFAULT_EXPMA_DEVIATION_PERCENT = 4;
 const DEFAULT_BEARISH_MA_DAYS = { short: 5, mid: 20, long: 60 };
 const DEFAULT_VOLUME_AVERAGE_DAYS = 5;
 const DEFAULT_LOW_BREAK_DAYS = 20;
@@ -2271,6 +2273,18 @@ class QuotesViewProvider {
       color: color-mix(in srgb, #f59e0b 88%, var(--vscode-foreground) 12%);
     }
 
+    .alert-badge-expma {
+      color: color-mix(in srgb, var(--vscode-notificationsWarningIcon-foreground, #d29922) 88%, var(--vscode-foreground) 12%);
+    }
+
+    .alert-badge-expma-up {
+      color: color-mix(in srgb, var(--up) 78%, var(--vscode-foreground) 22%);
+    }
+
+    .alert-badge-expma-down {
+      color: color-mix(in srgb, var(--down) 78%, var(--vscode-foreground) 22%);
+    }
+
     .alert-badge-direction {
       display: inline-block;
       width: 14px;
@@ -3951,6 +3965,7 @@ class QuotesViewProvider {
       const holdBelowDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageHoldBelow');
       const aboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageAbove');
       const holdAboveDays = getMaxMovingAverageAlertDays(alerts, 'movingAverageHoldAbove');
+      const expmaAlerts = getExpmaAlertBadges(alerts);
       if (belowDays !== null) {
         badges.push(renderMovingAverageAlertBadge(belowDays, 'alert-badge-level-' + belowDays, title, label));
       }
@@ -3966,6 +3981,9 @@ class QuotesViewProvider {
       if (holdAboveDays !== null && holdAboveDays !== aboveDays) {
         badges.push(renderMovingAverageAlertBadge(holdAboveDays, 'alert-badge-above-level-' + holdAboveDays, title, label));
       }
+      for (const expmaAlert of expmaAlerts) {
+        badges.push(renderMovingAverageAlertBadge('E' + expmaAlert.days, expmaAlert.levelClass, title, label));
+      }
       return badges;
     }
 
@@ -3979,6 +3997,37 @@ class QuotesViewProvider {
         .map((alert) => Number(alert && alert.movingAverageDays))
         .filter((value) => Number.isFinite(value) && value > 0);
       return days.length > 0 ? Math.max(...days) : null;
+    }
+
+    function getExpmaAlertBadges(alerts) {
+      const entries = new Map();
+      for (const alert of alerts) {
+        const type = String(alert && alert.type || '');
+        if (type !== 'expmaDeviationAbove' && type !== 'expmaDeviationBelow') {
+          continue;
+        }
+        const days = Number(alert && alert.expmaDays);
+        if (!Number.isFinite(days) || days <= 0) {
+          continue;
+        }
+        const entry = entries.get(days) || { days, hasAbove: false, hasBelow: false };
+        if (type === 'expmaDeviationAbove') {
+          entry.hasAbove = true;
+        } else {
+          entry.hasBelow = true;
+        }
+        entries.set(days, entry);
+      }
+      return Array.from(entries.values())
+        .sort((left, right) => left.days - right.days)
+        .map((entry) => ({
+          days: entry.days,
+          levelClass: entry.hasAbove && !entry.hasBelow
+            ? 'alert-badge-expma-up'
+            : entry.hasBelow && !entry.hasAbove
+              ? 'alert-badge-expma-down'
+              : 'alert-badge-expma'
+        }));
     }
 
     function getAlertDirections(alerts) {
@@ -4004,27 +4053,28 @@ class QuotesViewProvider {
         'volumeDrop',
         'lowBreak',
         'rsiWeak',
-        'bollingerBelow'
+        'bollingerBelow',
+        'expmaDeviationBelow'
       ].includes(type)) {
         return 'down';
       }
-      if (type === 'reboundLowVolume' || type === 'movingAverageAbove' || type === 'movingAverageHoldAbove') {
+      if (type === 'reboundLowVolume' || type === 'movingAverageAbove' || type === 'movingAverageHoldAbove' || type === 'expmaDeviationAbove') {
         return 'up';
       }
 
       const key = String(alert && alert.key || '');
-      if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:|:movingAverageAbove:|:movingAverageHoldAbove:/.test(key)) {
+      if (/:priceAbove:|:changePercentAbove:|:reboundLowVolume:|:movingAverageAbove:|:movingAverageHoldAbove:|:expmaDeviationAbove:/.test(key)) {
         return 'up';
       }
-      if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:movingAverageS:|:movingAverageHoldBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:/.test(key)) {
+      if (/:priceBelow:|:changePercentBelow:|:movingAverageBelow:|:movingAverageS:|:movingAverageHoldBelow:|:intradayHighPullback:|:bearishMovingAverage:|:macdDeathCross:|:volumeDrop:|:lowBreak:|:rsiWeak:|:bollingerBelow:|:expmaDeviationBelow:/.test(key)) {
         return 'down';
       }
 
       const label = String(alert && alert.label || '');
-      if (/上涨|涨幅|反弹|站上|站稳|>=/.test(label)) {
+      if (/上涨|涨幅|反弹|站上|站稳|上偏离|>=/.test(label)) {
         return 'up';
       }
-      if (/下跌|跌破|失守|回落|走弱|死叉|<=/.test(label)) {
+      if (/下跌|跌破|失守|回落|走弱|死叉|下偏离|<=/.test(label)) {
         return 'down';
       }
       return '';
@@ -5281,6 +5331,10 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       movingAverageAboveDaysList: [],
       movingAverageHoldAbove: false,
       movingAverageHoldAboveDaysList: [],
+      expmaDeviation: false,
+      expmaDays: DEFAULT_EXPMA_DAYS,
+      expmaDeviationAbovePercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
+      expmaDeviationBelowPercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
       intradayHighPullback: true,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
@@ -5321,6 +5375,10 @@ function addDefaultIntradayHighPullbackAlerts(symbols, alerts) {
       movingAverageAboveDaysList: [],
       movingAverageHoldAbove: false,
       movingAverageHoldAboveDaysList: [],
+      expmaDeviation: false,
+      expmaDays: DEFAULT_EXPMA_DAYS,
+      expmaDeviationAbovePercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
+      expmaDeviationBelowPercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
       intradayHighPullback: true,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
@@ -5401,6 +5459,10 @@ function normalizeAlertRule(item) {
     bollingerBelow: sanitizeBollingerBelow(item.bollingerBelow),
     bollingerDays: sanitizeMovingAverageDays(item.bollingerDays || DEFAULT_BOLLINGER_DAYS),
     bollingerStdDev: optionalPositiveNumber(item.bollingerStdDev, DEFAULT_BOLLINGER_STD_DEV),
+    expmaDeviation: item.expmaDeviation === true,
+    expmaDays: sanitizeMovingAverageDays(item.expmaDays === undefined ? DEFAULT_EXPMA_DAYS : item.expmaDays),
+    expmaDeviationAbovePercent: optionalPositiveNumber(item.expmaDeviationAbovePercent, DEFAULT_EXPMA_DEVIATION_PERCENT),
+    expmaDeviationBelowPercent: optionalPositiveNumber(item.expmaDeviationBelowPercent, DEFAULT_EXPMA_DEVIATION_PERCENT),
     intradayHighPullback: item.intradayHighPullback === true,
     intradayHighPullbackPercent: optionalPositiveNumber(item.intradayHighPullbackPercent, DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT),
     intradayDowntrendConfirmTicks: sanitizeIntradayConfirmTicks(item.intradayDowntrendConfirmTicks),
@@ -5640,6 +5702,7 @@ function hasDailyKlineAlertIndicator(indicators) {
     || indicators.lowBreak
     || indicators.rsiWeak
     || indicators.bollingerBelow
+    || indicators.expmaDeviation
   );
 }
 
@@ -6392,7 +6455,8 @@ function summarizeAlertRules(rules) {
     movingAverageHoldAbove: 0,
     intradayHighPullback: 0,
     threshold: 0,
-    dailyTechnical: 0
+    dailyTechnical: 0,
+    expmaDeviation: 0
   };
   for (const rule of rules || []) {
     if (!rule) {
@@ -6421,6 +6485,9 @@ function summarizeAlertRules(rules) {
     }
     if (hasDailyKlineAlertIndicator(rule)) {
       summary.dailyTechnical += 1;
+    }
+    if (rule.expmaDeviation) {
+      summary.expmaDeviation += 1;
     }
   }
   return summary;
@@ -6991,6 +7058,7 @@ function getTechnicalHistoryLimit(rule) {
     rule.lowBreakDays + 10,
     rule.rsiDays + 30,
     rule.bollingerDays + 10,
+    rule.expmaDays + 30,
     90
   ];
   return Math.min(MAX_MOVING_AVERAGE_DAYS + 30, Math.max(...values.filter((value) => Number.isFinite(value))));
@@ -7010,6 +7078,7 @@ function addTechnicalAlertsIfMet(alerts, quote, displayName, rule, technicalSnap
     addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
     addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars);
     addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
+    addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces);
   }
   addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces, intradayTrendState);
 }
@@ -7173,6 +7242,51 @@ function addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, pri
     label: `${label} ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`,
     message: `${displayName} ${label}，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，阈值 ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`
   });
+}
+
+function addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces) {
+  if (!rule.expmaDeviation) {
+    return;
+  }
+
+  const closes = [...getPreviousCloses(bars, rule.expmaDays + 30), quote.price];
+  const expma = calculateExpma(closes, rule.expmaDays);
+  if (expma === null || expma <= 0) {
+    return;
+  }
+
+  const deviationPercent = ((quote.price - expma) / expma) * 100;
+  const formattedDeviation = formatPercentValue(Math.abs(deviationPercent));
+  const formattedExpma = formatPriceDecimalFixed(expma, priceDecimalPlaces);
+  const formattedPrice = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
+  if (deviationPercent >= rule.expmaDeviationAbovePercent) {
+    const threshold = formatPercentValue(rule.expmaDeviationAbovePercent);
+    const label = `EXPMA${rule.expmaDays} 上偏离 ${formattedDeviation}%`;
+    alerts.push({
+      key: `${quote.code}:expmaDeviationAbove:${rule.expmaDays}:${threshold}:${formattedDeviation}`,
+      type: 'expmaDeviationAbove',
+      expmaDays: rule.expmaDays,
+      expmaDeviationPercent: deviationPercent,
+      code: quote.code,
+      name: displayName,
+      label,
+      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`
+    });
+  }
+  if (deviationPercent <= -rule.expmaDeviationBelowPercent) {
+    const threshold = formatPercentValue(rule.expmaDeviationBelowPercent);
+    const label = `EXPMA${rule.expmaDays} 下偏离 ${formattedDeviation}%`;
+    alerts.push({
+      key: `${quote.code}:expmaDeviationBelow:${rule.expmaDays}:${threshold}:${formattedDeviation}`,
+      type: 'expmaDeviationBelow',
+      expmaDays: rule.expmaDays,
+      expmaDeviationPercent: deviationPercent,
+      code: quote.code,
+      name: displayName,
+      label,
+      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`
+    });
+  }
 }
 
 function addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bars, priceDecimalPlaces, intradayTrendState) {
@@ -7405,6 +7519,24 @@ function calculateBollingerBands(closes, days, stdDevMultiplier) {
     upper: middle + stdDev * stdDevMultiplier,
     lower: middle - stdDev * stdDevMultiplier
   };
+}
+
+function calculateExpma(closes, days) {
+  if (!Array.isArray(closes) || closes.length < days) {
+    return null;
+  }
+
+  const validCloses = closes.filter((close) => Number.isFinite(close) && close > 0);
+  if (validCloses.length < days) {
+    return null;
+  }
+
+  const weight = 2 / (days + 1);
+  let expma = validCloses[0];
+  for (let index = 1; index < validCloses.length; index += 1) {
+    expma = validCloses[index] * weight + expma * (1 - weight);
+  }
+  return expma;
 }
 
 async function fetchMarketBreadth(timeoutMs) {
