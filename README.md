@@ -157,7 +157,7 @@
       "movingAverageBelow": false,
       "movingAverageS": false,
       "expmaDeviation": true,
-      "expmaDays": 12,
+      "expmaDays": 13,
       "expmaDeviationAbovePercent": 4,
       "expmaDeviationBelowPercent": 4
     },
@@ -194,7 +194,7 @@ When `marketMonitoring.enableAlerts` is enabled, symbols with `holding > 0` get 
 
 `movingAverageS` triggers an "S预警" when the latest price is less than or equal to `MA(N) * (1 - X / 100)`. Use `movingAverageSDays` to configure N, and `movingAverageSOffsetPercent` to configure X.
 
-`expmaDeviation` triggers an EXPMA deviation alert when the latest price is at least `expmaDeviationAbovePercent` above `EXPMA(expmaDays)` or at least `expmaDeviationBelowPercent` below it. The default EXPMA window is `12`, both default thresholds are `4`, and the quote row badge shows `E12` plus an up or down arrow.
+`expmaDeviation` triggers an EXPMA deviation alert when the latest price is at least `expmaDeviationAbovePercent` above `EXPMA(expmaDays)` or at least `expmaDeviationBelowPercent` below it. The default EXPMA window is `13`, both default thresholds are `4`, and the quote row badge shows `E13` plus an up or down arrow.
 
 Set `movingAverageHoldBelow: true` for close-confirmed "失守 N 日线" alerts using the same cross-down condition after market close. This downside confirmation alert is disabled by default; use `movingAverageHoldBelowDays` to choose its windows.
 
