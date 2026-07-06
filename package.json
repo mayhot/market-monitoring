@@ -435,6 +435,29 @@
           "default": false,
           "description": "Show VS Code notifications when quote alerts are newly triggered."
         },
+        "marketMonitoring.defaultMonitoringIndicators": {
+          "type": "array",
+          "default": [
+            "movingAverageBelow",
+            "movingAverageS",
+            "intradayHighPullback"
+          ],
+          "markdownDescription": "Default monitoring indicators automatically added for configured symbols with `holding > 0`. Explicit `marketMonitoring.alerts` rules still run even when a symbol has no holding. Use an empty array to disable automatic default indicators.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "movingAverageBelow",
+              "movingAverageS",
+              "intradayHighPullback"
+            ],
+            "enumDescriptions": [
+              "Default intraday break-below moving-average alert.",
+              "Default moving-average S alert.",
+              "Default intraday high pullback alert."
+            ]
+          },
+          "uniqueItems": true
+        },
         "marketMonitoring.ai.enabled": {
           "type": "boolean",
           "default": false,

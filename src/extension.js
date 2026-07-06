@@ -34,6 +34,8 @@ const DEFAULT_MINUTE_TREND_CONFIRM_MINUTES = 3;
 const DEFAULT_MINUTE_TREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_EPSILON_PERCENT = 0.03;
 const DEFAULT_PRICE_DECIMAL_PLACES = { threshold: 10, belowThreshold: 3, fromThreshold: 2 };
+const DEFAULT_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback'];
+const AVAILABLE_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback'];
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'marketValue', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -395,10 +397,11 @@ class MarketMonitor {
   }
 
   persistConfiguredSymbols(reason) {
-    this.database.upsertSymbols(this.config.symbols).then(() => {
+    this.database.upsertSymbols(this.config.monitoredSymbols).then(() => {
       this.logInfo('Configured symbols persisted', {
         reason,
-        symbols: this.config.symbols.length
+        symbols: this.config.symbols.length,
+        monitoredSymbols: this.config.monitoredSymbols.length
       });
     });
   }
@@ -1169,7 +1172,7 @@ class MarketMonitor {
   async persistQuoteSnapshotToDatabase() {
     const configuredCodes = new Set(this.config.symbols.map((symbol) => symbol.code));
     const configuredQuotes = this.groupStatsQuotes.filter((quote) => configuredCodes.has(quote.code));
-    await this.database.upsertSymbols(this.config.symbols);
+    await this.database.upsertSymbols(this.config.monitoredSymbols);
     await this.database.upsertQuoteSnapshot(this.groupStatsQuotes, this.lastUpdatedAt, this.lastUpdatedDate);
     await this.database.upsertQuoteDailyBars(configuredQuotes, this.lastUpdatedDate);
   }
@@ -4507,14 +4510,22 @@ function readConfig() {
   const normalizedAlerts = rawAlerts
     .map(normalizeAlertRule)
     .filter(Boolean);
-  const alerts = addDefaultIntradayHighPullbackAlerts(symbols, addDefaultMovingAverageAlerts(symbols, normalizedAlerts, explicitAlertCodes));
+  const defaultMonitoringIndicators = sanitizeDefaultMonitoringIndicators(config.get('defaultMonitoringIndicators', DEFAULT_MONITORING_INDICATORS));
+  const monitoredSymbols = symbols.filter(hasHoldingQuantity);
+  const alerts = addDefaultIntradayHighPullbackAlerts(
+    monitoredSymbols,
+    addDefaultMovingAverageAlerts(monitoredSymbols, normalizedAlerts, explicitAlertCodes, defaultMonitoringIndicators),
+    defaultMonitoringIndicators
+  );
   const language = sanitizeLanguage(config.get('language', DEFAULT_LANGUAGE));
   const ai = readAiConfig(config);
 
   return {
     groups,
     symbols,
+    monitoredSymbols,
     alerts,
+    defaultMonitoringIndicators,
     ai,
     language,
     locale: resolveLanguage(language),
@@ -5306,7 +5317,15 @@ function getExplicitAlertCodes(items) {
     .filter(Boolean));
 }
 
-function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
+function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes, indicators = DEFAULT_MONITORING_INDICATORS) {
+  const enabledIndicators = new Set(sanitizeDefaultMonitoringIndicators(indicators));
+  const movingAverageBelow = enabledIndicators.has('movingAverageBelow');
+  const movingAverageS = enabledIndicators.has('movingAverageS');
+  const intradayHighPullback = enabledIndicators.has('intradayHighPullback');
+  if (!movingAverageBelow && !movingAverageS) {
+    return alerts || [];
+  }
+
   const configuredCodes = explicitAlertCodes || new Set();
   const existingCodes = new Set((alerts || []).map((alert) => alert.code));
   const defaults = [];
@@ -5319,11 +5338,11 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
     defaults.push({
       code: symbol.code,
       name: symbol.name || '',
-      movingAverageBelow: true,
+      movingAverageBelow,
       movingAverageDays: DEFAULT_MOVING_AVERAGE_DAYS,
-      movingAverageBelowDaysList: DEFAULT_MOVING_AVERAGE_ALERT_DAYS,
-      movingAverageS: true,
-      movingAverageSDaysList: [DEFAULT_MOVING_AVERAGE_DAYS],
+      movingAverageBelowDaysList: movingAverageBelow ? DEFAULT_MOVING_AVERAGE_ALERT_DAYS : [],
+      movingAverageS,
+      movingAverageSDaysList: movingAverageS ? [DEFAULT_MOVING_AVERAGE_DAYS] : [],
       movingAverageSOffsetPercent: DEFAULT_MOVING_AVERAGE_S_OFFSET_PERCENT,
       movingAverageHoldBelow: false,
       movingAverageHoldBelowDaysList: [],
@@ -5335,7 +5354,7 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
       expmaDays: DEFAULT_EXPMA_DAYS,
       expmaDeviationAbovePercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
       expmaDeviationBelowPercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
-      intradayHighPullback: true,
+      intradayHighPullback,
       intradayHighPullbackPercent: DEFAULT_INTRADAY_HIGH_PULLBACK_PERCENT,
       intradayDowntrendConfirmTicks: DEFAULT_INTRADAY_DOWNTREND_CONFIRM_TICKS,
       intradayDowntrendSlopePoints: DEFAULT_INTRADAY_DOWNTREND_SLOPE_POINTS,
@@ -5350,7 +5369,11 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes) {
   return [...(alerts || []), ...defaults];
 }
 
-function addDefaultIntradayHighPullbackAlerts(symbols, alerts) {
+function addDefaultIntradayHighPullbackAlerts(symbols, alerts, indicators = DEFAULT_MONITORING_INDICATORS) {
+  if (!sanitizeDefaultMonitoringIndicators(indicators).includes('intradayHighPullback')) {
+    return alerts || [];
+  }
+
   const existingCodes = new Set((alerts || [])
     .filter((alert) => alert && alert.intradayHighPullback)
     .map((alert) => alert.code));
@@ -8886,11 +8909,15 @@ function calculatePositionValue(quote, total) {
 
 function calculateMarketValue(quote) {
   const price = Number(quote.price);
-  const holding = Number(quote.holding);
-  if (!Number.isFinite(price) || !Number.isFinite(holding) || holding <= 0) {
+  if (!Number.isFinite(price) || !hasHoldingQuantity(quote)) {
     return null;
   }
-  return price * holding;
+  return price * Number(quote.holding);
+}
+
+function hasHoldingQuantity(item) {
+  const holding = Number(item && item.holding);
+  return Number.isFinite(holding) && holding > 0;
 }
 
 function toPinyin(value) {
@@ -9450,6 +9477,13 @@ function sanitizeQuoteColumns(value) {
   const normalized = value.map((column) => column === 'identity' ? 'name' : column);
   const columns = normalized.filter((column, index) => allowed.has(column) && normalized.indexOf(column) === index);
   return columns.length > 0 ? columns : defaults;
+}
+
+function sanitizeDefaultMonitoringIndicators(value) {
+  if (!Array.isArray(value)) {
+    return DEFAULT_MONITORING_INDICATORS;
+  }
+  return value.filter((indicator, index) => AVAILABLE_MONITORING_INDICATORS.includes(indicator) && value.indexOf(indicator) === index);
 }
 
 function sanitizeGroupSummaryMetrics(value) {
