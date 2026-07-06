@@ -166,6 +166,8 @@ function activate(context) {
       monitor.addGroup(message.name);
     } else if (message.command === 'renameGroup') {
       monitor.renameGroup(message.oldName, message.newName);
+    } else if (message.command === 'removeGroup') {
+      monitor.removeGroup(message.name);
     } else if (message.command === 'removeSymbol') {
       monitor.removeSymbol(message.index);
     } else if (message.command === 'moveSymbol') {
@@ -702,12 +704,39 @@ class MarketMonitor {
 
     const startedAt = Date.now();
     try {
-      const result = await vscode.window.withProgress({
+      const plan = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'Market Monitoring AI 正在处理指令',
         cancellable: false
       }, async () => {
-        const plan = await createAiManagementPlan(naturalLanguagePrompt, this.config, this.output);
+        return createAiManagementPlan(naturalLanguagePrompt, this.config, this.output);
+      });
+
+      const removeGroupSummary = summarizeAiRemoveGroupActions(plan, this.config);
+      if (removeGroupSummary.groups.length > 0) {
+        const choice = await vscode.window.showWarningMessage(
+          `确认删除分组 ${removeGroupSummary.groups.join('、')}？组内 ${removeGroupSummary.symbols} 个标的也会被删除。`,
+          { modal: true },
+          '删除分组'
+        );
+        if (choice !== '删除分组') {
+          const message = '已取消删除分组';
+          this.provider.postAiResult(requestId, {
+            ok: true,
+            message,
+            changes: [],
+            warnings: []
+          });
+          vscode.window.showInformationMessage(message);
+          return;
+        }
+      }
+
+      const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Market Monitoring AI 正在应用指令',
+        cancellable: false
+      }, async () => {
         return applyAiManagementPlan(plan, this.config, this.output, this.database);
       });
 
@@ -794,6 +823,35 @@ class MarketMonitor {
     await updateConfiguredGroups(nextGroups.length > 0 ? nextGroups : [DEFAULT_GROUP]);
     await updateConfiguredSymbols(nextSymbols);
     vscode.window.showInformationMessage(`已修改分组 ${currentName} -> ${nextName}`);
+  }
+
+  async removeGroup(name) {
+    const groupName = normalizeGroupName(name);
+    if (!groupName || !this.config.groups.includes(groupName)) {
+      vscode.window.showWarningMessage(`分组不存在，无法删除：${groupName || '(空)'}`);
+      return;
+    }
+
+    if (this.config.groups.length <= 1) {
+      vscode.window.showWarningMessage('至少需要保留一个分组');
+      return;
+    }
+
+    const removedSymbols = this.config.symbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) === groupName);
+    const choice = await vscode.window.showWarningMessage(
+      `确认删除分组 ${groupName}？组内 ${removedSymbols.length} 个标的也会被删除。`,
+      { modal: true },
+      '删除分组'
+    );
+    if (choice !== '删除分组') {
+      return;
+    }
+
+    const nextGroups = this.config.groups.filter((group) => group !== groupName);
+    const nextSymbols = this.config.symbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) !== groupName);
+    await updateConfiguredSymbols(nextSymbols);
+    await updateConfiguredGroups(nextGroups);
+    vscode.window.showInformationMessage(`已删除分组 ${groupName} 和 ${removedSymbols.length} 个标的`);
   }
 
   async removeSymbol(index) {
@@ -2593,6 +2651,7 @@ class QuotesViewProvider {
         dailyProfitPercent: '今日收益率',
         groupName: '分组名称',
         saveGroupName: '保存分组名称',
+        deleteGroup: '删除分组',
         collapseAdd: '收起添加',
         addSymbol: '添加标的',
         risingCount: '上升数',
@@ -2675,6 +2734,7 @@ class QuotesViewProvider {
         dailyProfitPercent: 'Today profit %',
         groupName: 'Group name',
         saveGroupName: 'Save group name',
+        deleteGroup: 'Delete group',
         collapseAdd: 'Collapse add form',
         addSymbol: 'Add symbol',
         risingCount: 'Rising',
@@ -2900,6 +2960,12 @@ class QuotesViewProvider {
             newName
           });
         }
+      } else if (action === 'removeGroup') {
+        const group = button.dataset.group || '';
+        vscode.postMessage({
+          command: 'removeGroup',
+          name: group
+        });
       } else if (action === 'toggleGroup') {
         const group = button.dataset.group || '';
         collapsedGroups = {
@@ -3790,6 +3856,7 @@ class QuotesViewProvider {
       return '<div class="group-rename-row">' +
         '<input data-group-name="' + escapeHtml(groupName) + '" value="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('groupName')) + '">' +
         '<button class="secondary icon-button" data-action="renameGroup" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('saveGroupName')) + '" aria-label="' + escapeHtml(t('saveGroupName')) + '">✓</button>' +
+        '<button class="secondary icon-button danger" data-action="removeGroup" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(t('deleteGroup')) + '" aria-label="' + escapeHtml(t('deleteGroup')) + '">×</button>' +
       '</div>';
     }
 
@@ -4740,9 +4807,9 @@ async function createAiManagementPlan(prompt, config, output) {
     '你必须只返回 JSON，不要 Markdown，不要解释。',
     '根据用户自然语言，把需求转换为 actions 数组。',
     '可用 action.type：addGroup, renameGroup, removeGroup, addSymbol, removeSymbol, moveSymbol, renameSymbol, updateSymbol。',
-    '字段约定：group/name/newName/oldName/oldGroup/sourceGroup/fromGroup/code/cost/holding/moveSymbolsTo。',
+    '字段约定：group/name/newName/oldName/oldGroup/sourceGroup/fromGroup/code/cost/holding。',
     'addSymbol 可以只给 name，扩展会搜索匹配标的；如果用户给了股票代码，必须放到 code。',
-    'removeGroup 默认把组内标的移动到 moveSymbolsTo；没有指定时可以省略。',
+    'removeGroup 会删除分组，并同时删除该分组内的所有标的。',
     '不要编造不存在于当前列表中的旧标的代码；不确定时优先用 name。',
     '返回格式：{"actions":[...],"note":"简短说明"}'
   ].join('\n');
@@ -4791,6 +4858,34 @@ async function createAiManagementPlan(prompt, config, output) {
     note: String(parsed.note || parsed.summary || '').trim(),
     actions
   };
+}
+
+function summarizeAiRemoveGroupActions(plan, config) {
+  const actions = Array.isArray(plan && plan.actions) ? plan.actions : [];
+  let nextGroups = [...config.groups];
+  let nextSymbols = config.symbols.map((symbol) => ({ ...symbol }));
+  const groups = [];
+  let symbols = 0;
+
+  for (const rawAction of actions) {
+    const action = normalizeAiAction(rawAction);
+    if (!action || action.type !== 'removeGroup') {
+      continue;
+    }
+
+    const groupName = normalizeGroupName(action.name || action.group);
+    if (!groupName || !nextGroups.includes(groupName) || nextGroups.length <= 1) {
+      continue;
+    }
+
+    const removedSymbols = nextSymbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) === groupName);
+    groups.push(groupName);
+    symbols += removedSymbols.length;
+    nextGroups = nextGroups.filter((group) => group !== groupName);
+    nextSymbols = nextSymbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) !== groupName);
+  }
+
+  return { groups, symbols };
 }
 
 async function applyAiManagementPlan(plan, config, output, database) {
@@ -4867,11 +4962,16 @@ async function applyAiManagementPlan(plan, config, output, database) {
         appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'groupNotFound', groupName });
         continue;
       }
-      const fallbackGroup = ensureGroup(action.moveSymbolsTo || DEFAULT_GROUP);
+      if (nextGroups.length <= 1) {
+        warnings.push(`至少需要保留一个分组，无法删除：${groupName}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'lastGroup', groupName });
+        continue;
+      }
+      const removedSymbols = nextSymbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) === groupName);
       nextGroups = nextGroups.filter((group) => group !== groupName);
-      nextSymbols = nextSymbols.map((symbol) => symbol.group === groupName ? { ...symbol, group: fallbackGroup } : symbol);
-      changes.push(`删除分组：${groupName}，组内标的移动到 ${fallbackGroup}`);
-      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, groupName, fallbackGroup });
+      nextSymbols = nextSymbols.filter((symbol) => (normalizeGroupName(symbol.group) || DEFAULT_GROUP) !== groupName);
+      changes.push(`删除分组：${groupName}，同时删除组内 ${removedSymbols.length} 个标的`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, groupName, removedSymbols: removedSymbols.length });
       continue;
     }
 

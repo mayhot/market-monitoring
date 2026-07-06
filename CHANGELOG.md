@@ -13,6 +13,7 @@ All notable changes to this extension are documented in this file.
 ### Added
 
 - Added configurable default monitoring indicators for held symbols through `marketMonitoring.defaultMonitoringIndicators`.
+- Added a group delete action in edit mode, with confirmation before removing the group and all symbols inside it.
 
 ### Changed
 
