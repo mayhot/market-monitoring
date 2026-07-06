@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.5] - 2026-07-06
+
+### Added
+
+- Added configurable default monitoring indicators for held symbols through `marketMonitoring.defaultMonitoringIndicators`.
+
+### Changed
+
+- Changed automatic default monitoring indicators and the SQLite monitored-symbol pool to include only symbols with `holding > 0`, while keeping explicit `marketMonitoring.alerts` rules active.
+- Bumped the extension version from `0.3.4` to `0.3.5`.
+
 ## [0.3.4] - 2026-07-03
 
 ### Added
