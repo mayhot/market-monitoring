@@ -97,6 +97,7 @@ function activate(context) {
   const output = vscode.window.createOutputChannel('Market Monitoring');
   const provider = new QuotesViewProvider(context.extensionUri);
   const monitor = new MarketMonitor(context, provider, output);
+  provider.onVisibilityChanged((visible) => monitor.updateViewVisibility(visible));
 
   context.subscriptions.push(
     output,
@@ -327,6 +328,7 @@ class MarketMonitor {
     this.isRefreshing = false;
     this.collapsedGroups = {};
     this.editingRefreshPaused = false;
+    this.viewRefreshPaused = !this.provider.isVisible();
     this.configureRefreshPauseDepth = 0;
     this.pendingRefreshAfterPause = false;
     this.config = readConfig();
@@ -516,6 +518,31 @@ class MarketMonitor {
     this.resumeRefreshAfterPause('editing');
   }
 
+  updateViewVisibility(visible) {
+    const nextPaused = !visible;
+    if (this.viewRefreshPaused === nextPaused) {
+      return;
+    }
+
+    this.viewRefreshPaused = nextPaused;
+    this.lastRefreshSkipKey = '';
+    if (nextPaused) {
+      this.clearRefreshTimer();
+      this.logInfo('Refresh paused', {
+        reason: 'viewHidden',
+        pauseReasons: this.getRefreshPauseReasons()
+      });
+      return;
+    }
+
+    this.logInfo('Refresh pause ended', {
+      reason: 'viewVisible',
+      pendingRefresh: this.pendingRefreshAfterPause,
+      pauseReasons: this.getRefreshPauseReasons()
+    });
+    this.resumeRefreshAfterPause('viewVisible');
+  }
+
   async runWithRefreshPaused(callback, reason) {
     this.configureRefreshPauseDepth += 1;
     this.clearRefreshTimer();
@@ -537,13 +564,16 @@ class MarketMonitor {
   }
 
   isRefreshPaused() {
-    return this.editingRefreshPaused || this.configureRefreshPauseDepth > 0;
+    return this.editingRefreshPaused || this.viewRefreshPaused || this.configureRefreshPauseDepth > 0;
   }
 
   getRefreshPauseReasons() {
     const reasons = [];
     if (this.editingRefreshPaused) {
       reasons.push('editing');
+    }
+    if (this.viewRefreshPaused) {
+      reasons.push('viewHidden');
     }
     if (this.configureRefreshPauseDepth > 0) {
       reasons.push('configuration');
@@ -1176,6 +1206,14 @@ class MarketMonitor {
   }
 
   async refreshMarketBreadth(reason) {
+    if (!this.running || this.isRefreshPaused()) {
+      this.logInfo('Market breadth refresh skipped', {
+        reason,
+        pauseReasons: this.getRefreshPauseReasons()
+      });
+      return;
+    }
+
     if (!this.config.showMarketBreadth) {
       this.marketBreadth = createEmptyMarketBreadth();
       this.lastMarketBreadthRefreshStartedAt = 0;
@@ -1185,6 +1223,13 @@ class MarketMonitor {
     this.lastMarketBreadthRefreshStartedAt = Date.now();
     try {
       const marketBreadth = await fetchMarketBreadth(this.config.requestTimeoutMs);
+      if (!this.running || this.isRefreshPaused()) {
+        this.logInfo('Market breadth refresh result ignored', {
+          reason,
+          pauseReasons: this.getRefreshPauseReasons()
+        });
+        return;
+      }
       this.marketBreadth = marketBreadth;
       this.logInfo('Market breadth refreshed', {
         reason,
@@ -1196,6 +1241,13 @@ class MarketMonitor {
         total: marketBreadth.total
       });
     } catch (error) {
+      if (!this.running || this.isRefreshPaused()) {
+        this.logInfo('Market breadth refresh error ignored', {
+          reason,
+          pauseReasons: this.getRefreshPauseReasons()
+        });
+        return;
+      }
       const message = getErrorMessage(error);
       this.marketBreadth = markMarketBreadthError(this.marketBreadth, message);
       this.logWarn('Market breadth refresh failed', {
@@ -1464,6 +1516,8 @@ class QuotesViewProvider {
     this.extensionUri = extensionUri;
     this.view = undefined;
     this.messageHandler = undefined;
+    this.visibilityHandler = undefined;
+    this.visibilityDisposable = undefined;
     this.openAiOnResolve = false;
     this.snapshot = {
       running: false,
@@ -1511,8 +1565,22 @@ class QuotesViewProvider {
     this.messageHandler = handler;
   }
 
+  onVisibilityChanged(handler) {
+    this.visibilityHandler = handler;
+  }
+
+  isVisible() {
+    return Boolean(this.view && this.view.visible);
+  }
+
   resolveWebviewView(webviewView) {
     this.view = webviewView;
+    if (this.visibilityDisposable) {
+      this.visibilityDisposable.dispose();
+    }
+    this.visibilityDisposable = webviewView.onDidChangeVisibility(() => {
+      this.notifyVisibilityChanged();
+    });
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this.extensionUri]
@@ -1527,6 +1595,13 @@ class QuotesViewProvider {
     if (this.openAiOnResolve) {
       this.openAiOnResolve = false;
       this.openAiAssistant();
+    }
+    this.notifyVisibilityChanged();
+  }
+
+  notifyVisibilityChanged() {
+    if (this.visibilityHandler) {
+      this.visibilityHandler(this.isVisible());
     }
   }
 

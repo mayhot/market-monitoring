@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.7] - 2026-07-08
+
+### Fixed
+
+- Paused all quote and market breadth refreshes while the VS Code Market Monitoring view is hidden or collapsed, then resumed refresh scheduling when the view becomes visible again.
+
+### Changed
+
+- Bumped the extension version from `0.3.6` to `0.3.7`.
+
 ## [0.3.6] - 2026-07-06
 
 ### Changed
