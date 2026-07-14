@@ -440,7 +440,8 @@
           "default": [
             "movingAverageBelow",
             "movingAverageS",
-            "intradayHighPullback"
+            "intradayHighPullback",
+            "expmaDeviation"
           ],
           "markdownDescription": "Default monitoring indicators automatically added for configured symbols with `holding > 0`. Explicit `marketMonitoring.alerts` rules still run even when a symbol has no holding. Use an empty array to disable automatic default indicators.",
           "items": {
@@ -448,12 +449,14 @@
             "enum": [
               "movingAverageBelow",
               "movingAverageS",
-              "intradayHighPullback"
+              "intradayHighPullback",
+              "expmaDeviation"
             ],
             "enumDescriptions": [
               "Default intraday break-below moving-average alert.",
               "Default moving-average S alert.",
-              "Default intraday high pullback alert."
+              "Default intraday high pullback alert.",
+              "Default EXPMA deviation alert (E13, 4% threshold)."
             ]
           },
           "uniqueItems": true
