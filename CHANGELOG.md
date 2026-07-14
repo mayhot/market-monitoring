@@ -8,6 +8,13 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.8] - 2026-07-14
+
+### Changed
+
+- EXPMA deviation E13 badge color now dynamically intensifies with deviation magnitude: deeper and brighter as the deviation ratio (actual deviation / configured threshold) increases, capped at 2x the threshold for maximum saturation.
+- Bumped the extension version from `0.3.7` to `0.3.8`.
+
 ## [0.3.7] - 2026-07-08
 
 ### Fixed
