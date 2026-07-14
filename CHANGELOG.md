@@ -8,6 +8,20 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.9] - 2026-07-14
+
+### Added
+
+- `expmaDeviation` is now enabled by default in `defaultMonitoringIndicators`; all held positions automatically receive EXPMA deviation alerts (E13, 4% threshold by default).
+
+### Fixed
+
+- `movingAverageS` (S alert) badge tooltip now shows the actual price-to-MA deviation percentage instead of the configured threshold value.
+
+### Changed
+
+- Bumped the extension version from `0.3.8` to `0.3.9`.
+
 ## [0.3.8] - 2026-07-14
 
 ### Changed
