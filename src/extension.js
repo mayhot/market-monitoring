@@ -2756,7 +2756,7 @@ class QuotesViewProvider {
         position: '仓位',
         netProfit: '净收益额',
         aiAssistant: 'AI 助手',
-        aiPromptPlaceholder: '例如：新建“观察”分组，把贵州茅台和中际旭创加入观察；把兆易创新移到自选',
+        aiPromptPlaceholder: '例如：新建"观察"分组，把贵州茅台和中际旭创加入观察；把兆易创新移到自选',
         aiRun: '执行',
         aiRunning: '执行中...',
         aiOpenSettings: '配置 AI',
@@ -4127,13 +4127,15 @@ class QuotesViewProvider {
         badges.push(renderMovingAverageAlertBadge(holdAboveDays, 'alert-badge-above-level-' + holdAboveDays, title, label));
       }
       for (const expmaAlert of expmaAlerts) {
-        badges.push(renderMovingAverageAlertBadge('E' + expmaAlert.days, expmaAlert.levelClass, title, label));
+        const inlineStyle = 'color: color-mix(in srgb, ' + expmaAlert.hue + ' ' + expmaAlert.mixPercent + '%, var(--vscode-foreground) ' + (100 - expmaAlert.mixPercent) + '%)';
+        badges.push(renderMovingAverageAlertBadge('E' + expmaAlert.days, expmaAlert.levelClass, title, label, inlineStyle));
       }
       return badges;
     }
 
-    function renderMovingAverageAlertBadge(days, levelClass, title, label) {
-      return '<span class="alert-badge ' + levelClass + '" title="' + title + '" aria-label="' + label + '">' + escapeHtml(String(days)) + '</span>';
+    function renderMovingAverageAlertBadge(days, levelClass, title, label, inlineStyle) {
+      const styleAttr = inlineStyle ? ' style="' + inlineStyle + '"' : '';
+      return '<span class="alert-badge ' + levelClass + '"' + styleAttr + ' title="' + title + '" aria-label="' + label + '">' + escapeHtml(String(days)) + '</span>';
     }
 
     function getMaxMovingAverageAlertDays(alerts, type) {
@@ -4143,6 +4145,10 @@ class QuotesViewProvider {
         .filter((value) => Number.isFinite(value) && value > 0);
       return days.length > 0 ? Math.max(...days) : null;
     }
+
+    // EXPMA 偏离徽章颜色：以阈值处为基础混合比例，按偏离倍数线性加深，封顶最饱和。
+    const EXPMA_BADGE_BASE_MIX = 55;
+    const EXPMA_BADGE_MAX_MIX = 100;
 
     function getExpmaAlertBadges(alerts) {
       const entries = new Map();
@@ -4155,24 +4161,43 @@ class QuotesViewProvider {
         if (!Number.isFinite(days) || days <= 0) {
           continue;
         }
-        const entry = entries.get(days) || { days, hasAbove: false, hasBelow: false };
+        const entry = entries.get(days) || { days, hasAbove: false, hasBelow: false, upRatio: 0, downRatio: 0 };
+        const threshold = Math.max(Number(alert && alert.expmaDeviationThreshold) || 0, Number.EPSILON);
+        const ratio = Math.abs(Number(alert && alert.expmaDeviationPercent) || 0) / threshold;
         if (type === 'expmaDeviationAbove') {
           entry.hasAbove = true;
+          entry.upRatio = Math.max(entry.upRatio, ratio);
         } else {
           entry.hasBelow = true;
+          entry.downRatio = Math.max(entry.downRatio, ratio);
         }
         entries.set(days, entry);
       }
       return Array.from(entries.values())
         .sort((left, right) => left.days - right.days)
-        .map((entry) => ({
-          days: entry.days,
-          levelClass: entry.hasAbove && !entry.hasBelow
-            ? 'alert-badge-expma-up'
-            : entry.hasBelow && !entry.hasAbove
-              ? 'alert-badge-expma-down'
-              : 'alert-badge-expma'
-        }));
+        .map((entry) => {
+          let levelClass;
+          let hue;
+          let ratio;
+          if (entry.hasAbove && !entry.hasBelow) {
+            levelClass = 'alert-badge-expma-up';
+            hue = 'var(--up)';
+            ratio = entry.upRatio;
+          } else if (entry.hasBelow && !entry.hasAbove) {
+            levelClass = 'alert-badge-expma-down';
+            hue = 'var(--down)';
+            ratio = entry.downRatio;
+          } else {
+            levelClass = 'alert-badge-expma';
+            hue = 'var(--vscode-notificationsWarningIcon-foreground, #d29922)';
+            ratio = Math.max(entry.upRatio, entry.downRatio);
+          }
+          const mixPercent = Math.min(
+            EXPMA_BADGE_MAX_MIX,
+            Math.max(EXPMA_BADGE_BASE_MIX, Math.round(EXPMA_BADGE_BASE_MIX * ratio))
+          );
+          return { days: entry.days, levelClass, hue, mixPercent };
+        });
     }
 
     function getAlertDirections(alerts) {
@@ -7465,6 +7490,7 @@ function addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, pri
       type: 'expmaDeviationAbove',
       expmaDays: rule.expmaDays,
       expmaDeviationPercent: deviationPercent,
+      expmaDeviationThreshold: rule.expmaDeviationAbovePercent,
       code: quote.code,
       name: displayName,
       label,
@@ -7479,6 +7505,7 @@ function addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, pri
       type: 'expmaDeviationBelow',
       expmaDays: rule.expmaDays,
       expmaDeviationPercent: deviationPercent,
+      expmaDeviationThreshold: rule.expmaDeviationBelowPercent,
       code: quote.code,
       name: displayName,
       label,
@@ -8735,7 +8762,7 @@ function parseCsvImportRows(text) {
   };
 
   if (indexes.name < 0 && indexes.code < 0) {
-    throw new Error('CSV 必须包含“名称”或“代码”列');
+    throw new Error('CSV 必须包含"名称"或"代码"列');
   }
 
   return table.slice(1).map((row, index) => ({
