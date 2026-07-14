@@ -7053,7 +7053,9 @@ function addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAve
     const formattedThreshold = formatPriceDecimalFixed(threshold, priceDecimalPlaces);
     const formattedValue = formatPriceDecimalFixed(quote.price, priceDecimalPlaces);
     const formattedOffsetPercent = formatPercentValue(offsetPercent);
-    const alertLabel = `S预警 跌破${snapshot.days}日线下偏移${formattedOffsetPercent}% ${formattedThreshold}`;
+    const actualDeviationPercent = ((snapshot.average - quote.price) / snapshot.average) * 100;
+    const formattedActualDeviation = formatPercentValue(actualDeviationPercent);
+    const alertLabel = `S预警 跌破${snapshot.days}日线 ${formattedAverage} 偏离 ${formattedActualDeviation}%`;
 
     alerts.push({
       key: `${quote.code}:movingAverageS:${snapshot.days}:${formattedOffsetPercent}:${formattedThreshold}`,
