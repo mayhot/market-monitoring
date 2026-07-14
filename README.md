@@ -188,7 +188,7 @@
 }
 ```
 
-When `marketMonitoring.enableAlerts` is enabled, symbols with `holding > 0` get the default monitoring indicators configured by `marketMonitoring.defaultMonitoringIndicators`. The default value is `["movingAverageBelow", "movingAverageS", "intradayHighPullback"]`; use an empty array to disable automatic default indicators. Symbols without a valid holding do not show these default monitoring indicators and are not added to the SQLite monitored-symbol pool by default. Explicit rules in `marketMonitoring.alerts` still run even when the symbol has no holding.
+When `marketMonitoring.enableAlerts` is enabled, symbols with `holding > 0` get the default monitoring indicators configured by `marketMonitoring.defaultMonitoringIndicators`. The default value is `["movingAverageBelow", "movingAverageS", "intradayHighPullback", "expmaDeviation"]`; use an empty array to disable automatic default indicators. Symbols without a valid holding do not show these default monitoring indicators and are not added to the SQLite monitored-symbol pool by default. Explicit rules in `marketMonitoring.alerts` still run even when the symbol has no holding.
 
 `movingAverageBelow` adds default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`, and `movingAverageS` adds default `movingAverageS: true` alerts with `movingAverageSDays: 20` and `movingAverageSOffsetPercent: 4`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` or `movingAverageS: false` to disable those moving-average alerts for a symbol.
 

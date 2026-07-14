@@ -34,8 +34,8 @@ const DEFAULT_MINUTE_TREND_CONFIRM_MINUTES = 3;
 const DEFAULT_MINUTE_TREND_SLOPE_POINTS = 5;
 const DEFAULT_MINUTE_TREND_EPSILON_PERCENT = 0.03;
 const DEFAULT_PRICE_DECIMAL_PLACES = { threshold: 10, belowThreshold: 3, fromThreshold: 2 };
-const DEFAULT_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback'];
-const AVAILABLE_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback'];
+const DEFAULT_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback', 'expmaDeviation'];
+const AVAILABLE_MONITORING_INDICATORS = ['movingAverageBelow', 'movingAverageS', 'intradayHighPullback', 'expmaDeviation'];
 const AVAILABLE_QUOTE_COLUMNS = ['name', 'alias', 'code', 'price', 'changePercent', 'change', 'cost', 'holding', 'marketValue', 'position', 'netProfit'];
 const QUOTE_COLUMN_LABELS = {
   name: 'Name',
@@ -5522,6 +5522,7 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes, indi
   const movingAverageBelow = enabledIndicators.has('movingAverageBelow');
   const movingAverageS = enabledIndicators.has('movingAverageS');
   const intradayHighPullback = enabledIndicators.has('intradayHighPullback');
+  const expmaDeviation = enabledIndicators.has('expmaDeviation');
   if (!movingAverageBelow && !movingAverageS) {
     return alerts || [];
   }
@@ -5550,7 +5551,7 @@ function addDefaultMovingAverageAlerts(symbols, alerts, explicitAlertCodes, indi
       movingAverageAboveDaysList: [],
       movingAverageHoldAbove: false,
       movingAverageHoldAboveDaysList: [],
-      expmaDeviation: false,
+      expmaDeviation,
       expmaDays: DEFAULT_EXPMA_DAYS,
       expmaDeviationAbovePercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
       expmaDeviationBelowPercent: DEFAULT_EXPMA_DEVIATION_PERCENT,
