@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.10] - 2026-07-14
+
+### Fixed
+
+- `defaultMonitoringIndicators` configuration schema now includes `expmaDeviation` in its default value and enum list so the VS Code settings UI correctly shows all four default indicators.
+
+### Changed
+
+- Bumped the extension version from `0.3.9` to `0.3.10`.
+
 ## [0.3.9] - 2026-07-14
 
 ### Added
