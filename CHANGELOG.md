@@ -8,11 +8,18 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.12] - 2026-07-15
+
+### Changed
+
+- Reworked the group daily profit display from a VS Code status bar item into a dedicated bar above the index dock in the market panel; renamed the config from `marketMonitoring.showGroupDailyProfitStatusBar` to `marketMonitoring.showGroupDailyProfitBar`.
+- Bumped the extension version from `0.3.11` to `0.3.12`.
+
 ## [0.3.11] - 2026-07-15
 
 ### Added
 
-- New optional bar above the index dock in the market panel showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitBar` (default off); hover to view the per-group breakdown.
+- New optional VS Code status bar item showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitStatusBar` (default off); hover to view the per-group breakdown.
 
 ### Removed
 
