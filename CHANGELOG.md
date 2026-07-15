@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.13] - 2026-07-15
+
+### Fixed
+
+- Fixed the market panel failing to render (groups not shown, start button unresponsive) after installing 0.3.12. The `renderDailyProfitBar` webview function used `'\n'` inside the `getHtml` template literal, which was interpreted as a real newline and broke the embedded webview JavaScript. Changed to `'\\n'` to match the existing convention.
+
+### Changed
+
+- Bumped the extension version from `0.3.12` to `0.3.13`.
+
 ## [0.3.12] - 2026-07-15
 
 ### Changed

@@ -3472,7 +3472,7 @@ class QuotesViewProvider {
       const lines = data.groups
         .filter((g) => g.dailyProfit !== null && Number.isFinite(g.dailyProfit))
         .map((g) => g.name + ': ' + formatSignedLargeAmount(g.dailyProfit, snapshot.compactLargeAmounts));
-      dailyProfitBar.title = lines.length ? lines.join('\n') : '';
+      dailyProfitBar.title = lines.length ? lines.join('\\n') : '';
     }
 
     function updateStaticLabels() {
