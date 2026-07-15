@@ -108,14 +108,6 @@ function activate(context) {
     vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
     vscode.commands.registerCommand('marketMonitoring.stop', () => monitor.stop(true)),
-    vscode.commands.registerCommand('marketMonitoring.openAiAssistant', async () => {
-      if (!readAiConfig(vscode.workspace.getConfiguration(CONFIG_SECTION)).enabled) {
-        vscode.window.showInformationMessage('AI 入口未开启，请先在 Market Monitoring 设置中开启 marketMonitoring.ai.enabled。');
-        return;
-      }
-      await vscode.commands.executeCommand('workbench.view.extension.marketMonitoring');
-      provider.openAiAssistant();
-    }),
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${getExtensionId(context)}`);
     }),
@@ -3397,7 +3389,7 @@ class QuotesViewProvider {
       locale = snapshot.locale || 'zh-CN';
       document.documentElement.lang = locale;
       updateStaticLabels();
-      aiAssistant.hidden = !snapshot.ai || !snapshot.ai.enabled;
+      aiAssistant.hidden = true;
       if (aiAssistant.hidden && aiOpen) {
         aiOpen = false;
         persistViewState();

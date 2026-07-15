@@ -24,7 +24,6 @@
     "onCommand:marketMonitoring.exportCsv",
     "onCommand:marketMonitoring.start",
     "onCommand:marketMonitoring.stop",
-    "onCommand:marketMonitoring.openAiAssistant",
     "onCommand:marketMonitoring.configureQuoteColumns",
     "onCommand:marketMonitoring.openSettings"
   ],
@@ -55,11 +54,6 @@
         "command": "marketMonitoring.stop",
         "title": "Market Monitoring: Stop",
         "icon": "$(debug-pause)"
-      },
-      {
-        "command": "marketMonitoring.openAiAssistant",
-        "title": "Market Monitoring: AI Assistant",
-        "icon": "$(sparkle)"
       },
       {
         "command": "marketMonitoring.configureQuoteColumns",
@@ -109,11 +103,6 @@
           "group": "navigation"
         },
         {
-          "command": "marketMonitoring.openAiAssistant",
-          "when": "view == marketMonitoring.quotesView && config.marketMonitoring.ai.enabled",
-          "group": "navigation"
-        },
-        {
           "command": "marketMonitoring.configureQuoteColumns",
           "when": "view == marketMonitoring.quotesView",
           "group": "navigation"
@@ -139,10 +128,6 @@
         },
         {
           "command": "marketMonitoring.stop"
-        },
-        {
-          "command": "marketMonitoring.openAiAssistant",
-          "when": "config.marketMonitoring.ai.enabled"
         },
         {
           "command": "marketMonitoring.configureQuoteColumns"
