@@ -2505,6 +2505,7 @@ class QuotesViewProvider {
       flex: 0 0 auto;
       display: flex;
       align-items: center;
+      justify-content: flex-end;
       gap: 6px;
       padding: 4px 8px;
       min-width: 0;
@@ -2736,7 +2737,7 @@ class QuotesViewProvider {
         showMetric: '显示',
         totalAssets: '总资产',
         dailyProfit: '今日收益',
-        groupDailyProfitTotal: '今日盈亏',
+        groupDailyProfitTotal: '今日收益',
         dailyProfitPercent: '今日收益率',
         groupName: '分组名称',
         saveGroupName: '保存分组名称',
@@ -2820,7 +2821,7 @@ class QuotesViewProvider {
         showMetric: 'Show',
         totalAssets: 'Total assets',
         dailyProfit: 'Today profit',
-        groupDailyProfitTotal: 'Today P&L',
+        groupDailyProfitTotal: 'Today profit',
         dailyProfitPercent: 'Today profit %',
         groupName: 'Group name',
         saveGroupName: 'Save group name',
