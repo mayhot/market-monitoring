@@ -8,6 +8,20 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.11] - 2026-07-15
+
+### Added
+
+- New optional status bar item showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitStatusBar` (default off); hover to view the per-group breakdown.
+
+### Removed
+
+- Disabled the AI assistant entry: removed the `marketMonitoring.openAiAssistant` command, its activation event, the view title and command palette menu entries, and hid the webview AI button so the entry is no longer visible regardless of the `ai.enabled` setting. The `ai.*` configuration options are retained for backward compatibility.
+
+### Changed
+
+- Bumped the extension version from `0.3.10` to `0.3.11`.
+
 ## [0.3.10] - 2026-07-14
 
 ### Fixed
