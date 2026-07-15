@@ -228,6 +228,11 @@
           "default": false,
           "description": "Show a compact market summary in the VS Code status bar."
         },
+        "marketMonitoring.showGroupDailyProfitStatusBar": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the total daily profit (sum of change * holding across all groups) of all groups in the VS Code status bar."
+        },
         "marketMonitoring.showMarketBreadth": {
           "type": "boolean",
           "default": true,

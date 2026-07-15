@@ -210,6 +210,8 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 开启通知后，同一个标的每天最多弹出一次右下角通知；行情面板预警标记和状态栏预警数量仍会实时更新。
 
+状态栏还提供两个可独立开关的展示项，均默认关闭：将 `marketMonitoring.showStatusBar` 设为 `true` 可在状态栏显示前几个标的涨跌的紧凑摘要；将 `marketMonitoring.showGroupDailyProfitStatusBar` 设为 `true` 可在状态栏显示所有分组的「今日盈亏」总额（Σ 当日涨跌额 × 持仓，跨所有分组汇总），悬停可查看各分组明细。
+
 ## 排序配置
 
 行情面板里的上移、下移会调整 `marketMonitoring.symbols` 的配置顺序。每个分组底部提供添加标的和修改按钮；上移、下移、删除按钮默认隐藏，点击分组底部的修改按钮后显示。默认按持仓标的的市值排序，只有能根据实时价格和持仓数量计算出市值的标的参与市值排序，其余标的保持配置顺序并跟在后面。

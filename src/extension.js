@@ -302,6 +302,9 @@ class MarketMonitor {
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
     this.statusBarItem.command = 'marketMonitoring.refresh';
     this.context.subscriptions.push(this.statusBarItem);
+    this.groupProfitStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 95);
+    this.groupProfitStatusBarItem.command = 'marketMonitoring.refresh';
+    this.context.subscriptions.push(this.groupProfitStatusBarItem);
     this.running = false;
     const cachedSnapshot = readCachedQuoteSnapshot(this.context.globalState);
     this.minuteQuoteState = new Map();
@@ -1359,6 +1362,7 @@ class MarketMonitor {
     const snapshot = this.createSnapshot(phaseName, loading);
     this.provider.update(snapshot);
     this.updateStatusBar(snapshot);
+    this.updateGroupProfitStatusBar(snapshot);
   }
 
   updateStatusBar(snapshot) {
@@ -1397,6 +1401,42 @@ class MarketMonitor {
         ? snapshot.colors.up
         : getTrendColor(average, snapshot.colors);
     this.statusBarItem.show();
+  }
+
+  updateGroupProfitStatusBar(snapshot) {
+    if (!this.config.showGroupDailyProfitStatusBar) {
+      this.groupProfitStatusBarItem.hide();
+      return;
+    }
+
+    let total = 0;
+    let hasValue = false;
+    const groupLines = [];
+    for (const group of snapshot.groups) {
+      const summary = calculateGroupPortfolioSummaryValue(group.items);
+      if (summary.dailyProfit === null) {
+        continue;
+      }
+      total += summary.dailyProfit;
+      hasValue = true;
+      groupLines.push(`${group.name}: ${formatSignedLargeAmountStatus(summary.dailyProfit, this.config.compactLargeAmounts)}`);
+    }
+
+    if (!hasValue) {
+      this.groupProfitStatusBarItem.text = '$(money) 今日盈亏 --';
+      this.groupProfitStatusBarItem.tooltip = '暂无持仓可计算今日盈亏';
+      this.groupProfitStatusBarItem.color = undefined;
+      this.groupProfitStatusBarItem.show();
+      return;
+    }
+
+    this.groupProfitStatusBarItem.text = `$(money) 今日盈亏 ${formatSignedLargeAmountStatus(total, this.config.compactLargeAmounts)}`;
+    this.groupProfitStatusBarItem.tooltip = [
+      `今日盈亏总额: ${formatSignedLargeAmountStatus(total, this.config.compactLargeAmounts)}`,
+      ...groupLines
+    ].join('\n');
+    this.groupProfitStatusBarItem.color = getTrendColor(total, snapshot.colors);
+    this.groupProfitStatusBarItem.show();
   }
 
   async notifyAlerts(alerts) {
@@ -4702,6 +4742,7 @@ function readConfig() {
     marketBreadthRefreshIntervalSeconds: sanitizeMarketBreadthRefreshIntervalSeconds(config.get('marketBreadthRefreshIntervalSeconds', 300)),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
     showStatusBar: config.get('showStatusBar', false),
+    showGroupDailyProfitStatusBar: config.get('showGroupDailyProfitStatusBar', false),
     sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
     priceDecimalPlaces: sanitizePriceDecimalPlaces(config.get('priceDecimalPlaces', DEFAULT_PRICE_DECIMAL_PLACES)),
@@ -9536,6 +9577,36 @@ function calculateIntradayVwap(volume, amount) {
 
 function formatPercent(value) {
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function formatSignedLargeAmountStatus(value, compact) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return '--';
+  }
+  const abs = Math.abs(amount);
+  let text;
+  if (compact && abs > 10000) {
+    text = addThousandsSeparators((abs / 10000).toFixed(2)) + 'W';
+  } else {
+    text = addThousandsSeparators(abs.toFixed(2));
+  }
+  if (amount > 0) {
+    return '+' + text;
+  }
+  if (amount < 0) {
+    return '-' + text;
+  }
+  return text;
+}
+
+function addThousandsSeparators(value) {
+  const text = String(value);
+  const sign = text.startsWith('-') ? '-' : '';
+  const unsigned = sign ? text.slice(1) : text;
+  const parts = unsigned.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return sign + parts.join('.');
 }
 
 function getTrendColor(value, colors) {
