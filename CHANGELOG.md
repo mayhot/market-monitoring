@@ -12,7 +12,7 @@ All notable changes to this extension are documented in this file.
 
 ### Added
 
-- New optional status bar item showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitStatusBar` (default off); hover to view the per-group breakdown.
+- New optional bar above the index dock in the market panel showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitBar` (default off); hover to view the per-group breakdown.
 
 ### Removed
 
