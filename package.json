@@ -257,6 +257,27 @@
           "default": false,
           "description": "Show a bar above the index dock in the market panel that displays the total daily profit (sum of change * holding across all groups) of all groups."
         },
+        "marketMonitoring.indexSymbol": {
+          "type": "string",
+          "default": "sh000001",
+          "enum": [
+            "sh000985",
+            "sh000001",
+            "sz399001",
+            "sz399006",
+            "sh000688",
+            "bj899050"
+          ],
+          "enumDescriptions": [
+            "中证全指",
+            "上证指数",
+            "深证成指",
+            "创业板指",
+            "科创50",
+            "北证50"
+          ],
+          "description": "Index symbol displayed in the status bar."
+        },
         "marketMonitoring.showMarketBreadth": {
           "type": "boolean",
           "default": true,

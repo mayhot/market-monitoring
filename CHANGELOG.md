@@ -13,6 +13,9 @@ All notable changes to this extension are documented in this file.
 ### Added
 
 - The view title refresh button now shows a spinning animation while a refresh is in progress. A `marketMonitoring.refreshing` command with a `$(refresh~spin)` icon is toggled via a `marketMonitoring.isRefreshing` context key during refresh start/end.
+- New `marketMonitoring.indexSymbol` setting (enum: 中证全指/上证指数/深证成指/创业板指/科创50/北证50, default 上证指数) that selects which index is shown in the footer index dock. The previously user-selectable index dropdown was removed in favor of this configuration.
+- Moved full-market rising, falling, and flat stock counts from the footer left status cell into the footer index quote tooltip; the footer left cell now only shows refresh errors.
+- Added an Eastmoney `clist` fallback source for full-market breadth counts.
 
 ### Fixed
 
