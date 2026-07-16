@@ -1038,7 +1038,7 @@ class MarketMonitor {
       await this.databaseRestorePromise;
     }
 
-    if (!this.running || this.isRefreshing || this.isRefreshPaused()) {
+    if (!this.running || this.isRefreshing || (!force && this.isRefreshPaused())) {
       const paused = this.isRefreshPaused();
       if (paused && this.running) {
         this.pendingRefreshAfterPause = true;
@@ -1135,10 +1135,10 @@ class MarketMonitor {
     let marketBreadthPromise;
     try {
       if (this.shouldRefreshMarketBreadth(phase, force)) {
-        marketBreadthPromise = this.refreshMarketBreadth('refresh');
+        marketBreadthPromise = this.refreshMarketBreadth('refresh', force);
       }
       const fetchedQuotes = await fetchQuotes(quoteSymbols, this.config.requestTimeoutMs, (message, details) => this.logInfo(message, details));
-      if (this.isRefreshPaused()) {
+      if (!force && this.isRefreshPaused()) {
         this.pendingRefreshAfterPause = true;
         this.logInfo('Refresh result ignored', {
           reason: 'paused',
@@ -1198,8 +1198,8 @@ class MarketMonitor {
     }
   }
 
-  async refreshMarketBreadth(reason) {
-    if (!this.running || this.isRefreshPaused()) {
+  async refreshMarketBreadth(reason, force) {
+    if (!this.running || (!force && this.isRefreshPaused())) {
       this.logInfo('Market breadth refresh skipped', {
         reason,
         pauseReasons: this.getRefreshPauseReasons()
@@ -1216,7 +1216,7 @@ class MarketMonitor {
     this.lastMarketBreadthRefreshStartedAt = Date.now();
     try {
       const marketBreadth = await fetchMarketBreadth(this.config.requestTimeoutMs);
-      if (!this.running || this.isRefreshPaused()) {
+      if (!this.running || (!force && this.isRefreshPaused())) {
         this.logInfo('Market breadth refresh result ignored', {
           reason,
           pauseReasons: this.getRefreshPauseReasons()
@@ -1234,7 +1234,7 @@ class MarketMonitor {
         total: marketBreadth.total
       });
     } catch (error) {
-      if (!this.running || this.isRefreshPaused()) {
+      if (!this.running || (!force && this.isRefreshPaused())) {
         this.logInfo('Market breadth refresh error ignored', {
           reason,
           pauseReasons: this.getRefreshPauseReasons()
