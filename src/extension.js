@@ -2056,6 +2056,19 @@ class QuotesViewProvider {
       font-size: 12px;
     }
 
+    .group-summary-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-right: 6px;
+      min-width: 0;
+      font-size: 12px;
+    }
+
+    .group-summary-inline-cell {
+      white-space: nowrap;
+    }
+
     .group-menu {
       position: relative;
     }
@@ -3853,6 +3866,7 @@ class QuotesViewProvider {
               groupStats +
             '</span>' +
             '<span class="group-title-actions">' +
+              renderGroupSummaryInline(group.items, snapshot.groupSummaryMetrics, snapshot.compactLargeAmounts, group.summaryDrawdown) +
               renderGroupMenu(group.name, editing, adding) +
             '</span>' +
           '</div>' +
@@ -3933,6 +3947,37 @@ class QuotesViewProvider {
         '<span title="' + escapeHtml(t('groupSummary')) + '">' + escapeHtml(t('groupSummary')) + '</span>' +
         cells +
       '</div>';
+    }
+
+    function renderGroupSummaryInline(items, metrics, compactLargeAmounts, summaryDrawdown) {
+      const visibleMetrics = normalizeGroupSummaryMetrics(metrics);
+      if (visibleMetrics.length === 0) {
+        return '';
+      }
+      const summary = calculateGroupPortfolioSummary(items);
+      if (!hasVisibleGroupSummaryValue(summary, visibleMetrics)) {
+        return '';
+      }
+      const profitTrend = summary.dailyProfit > 0 ? 'up' : summary.dailyProfit < 0 ? 'down' : 'flat';
+      const cells = visibleMetrics.map((metric) => {
+        if (metric === 'totalAssets') {
+          const assets = summary.totalAssets === null ? '--' : formatLargeAmount(summary.totalAssets, compactLargeAmounts);
+          return '<span class="group-summary-inline-cell" title="' + escapeHtml(getGroupSummaryTotalAssetsTitle(summaryDrawdown)) + '">' +
+            escapeHtml(assets) +
+            renderGroupSummaryDrawdown(summaryDrawdown) +
+          '</span>';
+        }
+        if (metric === 'dailyProfit') {
+          const profit = summary.dailyProfit === null ? '--' : formatSignedLargeAmount(summary.dailyProfit, compactLargeAmounts);
+          return '<span class="group-summary-inline-cell quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfit')) + '">' + escapeHtml(profit) + '</span>';
+        }
+        if (metric === 'dailyProfitPercent') {
+          const percent = summary.dailyProfitPercent === null ? '--' : formatSigned(summary.dailyProfitPercent, 2) + '%';
+          return '<span class="group-summary-inline-cell quote-change ' + profitTrend + '" title="' + escapeHtml(t('dailyProfitPercent')) + '">' + escapeHtml(percent) + '</span>';
+        }
+        return '';
+      }).join('');
+      return '<span class="group-summary-inline">' + cells + '</span>';
     }
 
     function renderGroupSummaryDrawdown(summaryDrawdown) {
