@@ -1750,6 +1750,10 @@ class QuotesViewProvider {
       justify-content: center;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
     .toolbar .icon-button {
       flex: 0 0 auto;
     }
