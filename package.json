@@ -20,6 +20,7 @@
     "onStartupFinished",
     "onView:marketMonitoring.quotesView",
     "onCommand:marketMonitoring.refresh",
+    "onCommand:marketMonitoring.refreshing",
     "onCommand:marketMonitoring.importCsv",
     "onCommand:marketMonitoring.exportCsv",
     "onCommand:marketMonitoring.start",
@@ -34,6 +35,11 @@
         "command": "marketMonitoring.refresh",
         "title": "Market Monitoring: Refresh Quotes",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "marketMonitoring.refreshing",
+        "title": "Market Monitoring: Refresh Quotes",
+        "icon": "$(refresh~spin)"
       },
       {
         "command": "marketMonitoring.importCsv",
@@ -89,7 +95,12 @@
       "view/title": [
         {
           "command": "marketMonitoring.refresh",
-          "when": "view == marketMonitoring.quotesView",
+          "when": "view == marketMonitoring.quotesView && !marketMonitoring.isRefreshing",
+          "group": "navigation"
+        },
+        {
+          "command": "marketMonitoring.refreshing",
+          "when": "view == marketMonitoring.quotesView && marketMonitoring.isRefreshing",
           "group": "navigation"
         },
         {
@@ -116,6 +127,10 @@
       "commandPalette": [
         {
           "command": "marketMonitoring.refresh"
+        },
+        {
+          "command": "marketMonitoring.refreshing",
+          "when": "false"
         },
         {
           "command": "marketMonitoring.importCsv"

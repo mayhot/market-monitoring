@@ -104,6 +104,7 @@ function activate(context) {
     monitor.database,
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.commands.registerCommand('marketMonitoring.refresh', () => monitor.refresh(true)),
+    vscode.commands.registerCommand('marketMonitoring.refreshing', () => monitor.refresh(true)),
     vscode.commands.registerCommand('marketMonitoring.importCsv', () => monitor.importCsv()),
     vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
@@ -1108,6 +1109,7 @@ class MarketMonitor {
     }
 
     this.isRefreshing = true;
+    vscode.commands.executeCommand('setContext', 'marketMonitoring.isRefreshing', true);
     this.logInfo('Refresh started', {
       force,
       phase: phase.name,
@@ -1193,6 +1195,7 @@ class MarketMonitor {
       }
     } finally {
       this.isRefreshing = false;
+      vscode.commands.executeCommand('setContext', 'marketMonitoring.isRefreshing', false);
       this.updateViews(getMarketPhase().name);
       this.schedule();
     }
