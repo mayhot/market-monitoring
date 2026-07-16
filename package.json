@@ -39,7 +39,7 @@
       {
         "command": "marketMonitoring.refreshing",
         "title": "Market Monitoring: Refresh Quotes",
-        "icon": "$(refresh~spin)"
+        "icon": "$(sync~spin)"
       },
       {
         "command": "marketMonitoring.importCsv",

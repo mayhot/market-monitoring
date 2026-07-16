@@ -1754,6 +1754,14 @@ class QuotesViewProvider {
       display: none !important;
     }
 
+    #refresh.spinning {
+      animation: mm-spin 0.8s linear infinite;
+    }
+
+    @keyframes mm-spin {
+      to { transform: rotate(360deg); }
+    }
+
     .toolbar .icon-button {
       flex: 0 0 auto;
     }
@@ -3400,6 +3408,7 @@ class QuotesViewProvider {
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
+      refresh.classList.toggle('spinning', Boolean(snapshot.loading));
       renderFooterStatus(snapshot);
       renderDailyProfitBar(snapshot);
       if (shouldFreezeQuoteRender()) {
