@@ -109,6 +109,7 @@ function activate(context) {
     vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
     vscode.commands.registerCommand('marketMonitoring.stop', () => monitor.stop(true)),
+    vscode.commands.registerCommand('marketMonitoring.addGroup', () => monitor.showAddGroup()),
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${getExtensionId(context)}`);
     }),
@@ -125,13 +126,7 @@ function activate(context) {
       return;
     }
 
-    if (message.command === 'refresh') {
-      monitor.refresh(true);
-    } else if (message.command === 'importCsv') {
-      monitor.importCsv();
-    } else if (message.command === 'exportCsv') {
-      monitor.exportCsv();
-    } else if (message.command === 'settings') {
+    if (message.command === 'settings') {
       vscode.commands.executeCommand('marketMonitoring.openSettings');
     } else if (message.command === 'aiManage') {
       monitor.aiManage(message.prompt, message.requestId);
@@ -148,10 +143,6 @@ function activate(context) {
         line: message.line || 0,
         column: message.column || 0
       });
-    } else if (message.command === 'start') {
-      monitor.start(true);
-    } else if (message.command === 'stop') {
-      monitor.stop(true);
     } else if (message.command === 'addSymbol') {
       monitor.addSymbol(message.symbol);
     } else if (message.command === 'searchSymbols') {
@@ -342,6 +333,7 @@ class MarketMonitor {
 
   start(showMessage) {
     this.running = true;
+    vscode.commands.executeCommand('setContext', 'marketMonitoring.isRunning', true);
     this.logInfo('Started');
     this.schedule();
     this.refresh(false);
@@ -352,6 +344,7 @@ class MarketMonitor {
 
   stop(showMessage) {
     this.running = false;
+    vscode.commands.executeCommand('setContext', 'marketMonitoring.isRunning', false);
     this.logInfo('Stopped');
     if (this.timer) {
       clearTimeout(this.timer);
@@ -361,6 +354,10 @@ class MarketMonitor {
     if (showMessage) {
       vscode.window.showInformationMessage('Market Monitoring 已暂停');
     }
+  }
+
+  showAddGroup() {
+    this.provider.postShowAddGroup();
   }
 
   reloadConfiguration(reason = 'configurationChanged') {
@@ -1650,6 +1647,13 @@ class QuotesViewProvider {
     }
   }
 
+  postShowAddGroup() {
+    if (this.view) {
+      this.view.show(true);
+      this.view.webview.postMessage({ type: 'showAddGroup' });
+    }
+  }
+
   getHtml(webview) {
     const nonce = createNonce();
     const cspSource = webview.cspSource;
@@ -1754,31 +1758,6 @@ class QuotesViewProvider {
       display: none !important;
     }
 
-    .refresh-icon {
-      display: inline-block;
-    }
-
-    #refresh.spinning .refresh-icon {
-      animation: mm-spin 0.8s linear infinite;
-    }
-
-    @keyframes mm-spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .toolbar .icon-button {
-      flex: 0 0 auto;
-    }
-
-    .toolbar {
-      display: flex;
-      gap: 5px;
-      align-items: center;
-      min-width: 0;
-      max-width: 100%;
-      margin-bottom: 12px;
-    }
-
     .phase {
       flex: 1;
       min-width: 0;
@@ -1786,6 +1765,14 @@ class QuotesViewProvider {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .daily-profit-value {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
     }
 
     .group-form,
@@ -2524,7 +2511,7 @@ class QuotesViewProvider {
       flex: 0 0 auto;
       display: flex;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: space-between;
       gap: 6px;
       padding: 4px 8px;
       min-width: 0;
@@ -2687,21 +2674,16 @@ class QuotesViewProvider {
   <style nonce="${nonce}" id="dynamic-colors"></style>
 </head>
 <body>
-  <div class="toolbar">
-    <div class="phase" id="phase">未启动</div>
-    <button class="icon-button" id="toggle" title="启动" aria-label="启动">▶</button>
-    <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新"><span class="refresh-icon">↻</span></button>
-    <button class="secondary icon-button" id="import-csv" title="导入 CSV" aria-label="导入 CSV">⇧</button>
-    <button class="secondary icon-button" id="export-csv" title="导出 CSV" aria-label="导出 CSV">⇩</button>
-    <button class="secondary icon-button" id="ai-assistant" title="AI" aria-label="AI" hidden>🤖</button>
-  </div>
-  <form class="group-form" id="group-form">
+  <form class="group-form" id="group-form" hidden>
     <input id="group-name" name="group" placeholder="新增分组" autocomplete="off">
     <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
   <section class="ai-panel" id="ai-panel" hidden></section>
   <main id="app"></main>
-  <div id="daily-profit-bar" class="daily-profit-bar" hidden></div>
+  <div id="daily-profit-bar" class="daily-profit-bar">
+    <div class="phase" id="phase">未启动</div>
+    <div class="daily-profit-value" id="daily-profit-value" hidden></div>
+  </div>
   <footer class="index-dock">
     <div id="refresh-error" class="footer-status" hidden></div>
     <div class="index-widget">
@@ -2887,18 +2869,13 @@ class QuotesViewProvider {
     let viewState = vscode.getState() || {};
     const app = document.getElementById('app');
     const phase = document.getElementById('phase');
-    const toggle = document.getElementById('toggle');
-    const refresh = document.getElementById('refresh');
-    const importCsv = document.getElementById('import-csv');
-    const exportCsv = document.getElementById('export-csv');
-    const aiAssistant = document.getElementById('ai-assistant');
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
     const indexSelect = document.getElementById('index-select');
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
-    const dailyProfitBar = document.getElementById('daily-profit-bar');
+    const dailyProfitValue = document.getElementById('daily-profit-value');
     const dynamicColors = document.getElementById('dynamic-colors');
     let locale = 'zh-CN';
     let selectedIndexCode = viewState.selectedIndexCode || 'sh000001';
@@ -2927,24 +2904,6 @@ class QuotesViewProvider {
     let lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
     let lastSyncedEditingActive;
 
-    refresh.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
-    importCsv.addEventListener('click', () => vscode.postMessage({ command: 'importCsv' }));
-    exportCsv.addEventListener('click', () => vscode.postMessage({ command: 'exportCsv' }));
-    aiAssistant.addEventListener('click', () => {
-      if (!latestSnapshot || !latestSnapshot.ai || !latestSnapshot.ai.enabled) {
-        return;
-      }
-      aiOpen = !aiOpen;
-      persistViewState();
-      renderAiPanel(latestSnapshot);
-      if (aiOpen) {
-        focusAiInput();
-      }
-    });
-    toggle.addEventListener('click', () => {
-      const running = toggle.dataset.running === 'true';
-      vscode.postMessage({ command: running ? 'stop' : 'start' });
-    });
     groupForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const name = groupName.value.trim();
@@ -2958,12 +2917,19 @@ class QuotesViewProvider {
         name
       });
       groupName.value = '';
+      groupForm.hidden = true;
       syncEditingState();
-      groupName.focus();
     });
     groupName.addEventListener('input', () => syncEditingState());
     groupName.addEventListener('focus', () => syncEditingState());
     groupName.addEventListener('blur', () => syncEditingState());
+    groupName.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        groupForm.hidden = true;
+        groupName.value = '';
+        syncEditingState();
+      }
+    });
     app.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) {
@@ -3301,6 +3267,10 @@ class QuotesViewProvider {
         renderAiPanel(latestSnapshot);
       } else if (event.data && event.data.type === 'viewState') {
         applyPersistedViewState(event.data.viewState);
+      } else if (event.data && event.data.type === 'showAddGroup') {
+        groupForm.hidden = false;
+        groupName.value = '';
+        groupName.focus();
       }
     });
 
@@ -3393,26 +3363,16 @@ class QuotesViewProvider {
       locale = snapshot.locale || 'zh-CN';
       document.documentElement.lang = locale;
       updateStaticLabels();
-      aiAssistant.hidden = true;
-      if (aiAssistant.hidden && aiOpen) {
-        aiOpen = false;
-        persistViewState();
-      }
       const rowHighlightUp = snapshot.colors.mode === 'none' ? '#d73a49' : snapshot.colors.up;
       const rowHighlightDown = snapshot.colors.mode === 'none' ? '#16a34a' : snapshot.colors.down;
       const groupStatUp = snapshot.colors.up;
       const groupStatDown = 'color-mix(in srgb, ' + snapshot.colors.down + ' 80%, var(--surface) 20%)';
       dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--group-stat-up:' + groupStatUp + ';--group-stat-down:' + groupStatDown + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
-      toggle.dataset.running = String(snapshot.running);
-      toggle.textContent = snapshot.running ? '⏸' : '▶';
-      toggle.title = snapshot.running ? t('pause') : t('start');
-      toggle.setAttribute('aria-label', toggle.title);
       renderAiPanel(snapshot);
 
       const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
-      refresh.classList.toggle('spinning', Boolean(snapshot.loading));
       renderFooterStatus(snapshot);
       renderDailyProfitBar(snapshot);
       if (shouldFreezeQuoteRender()) {
@@ -3470,41 +3430,31 @@ class QuotesViewProvider {
 
     function renderDailyProfitBar(snapshot) {
       if (!snapshot || !snapshot.showGroupDailyProfitBar) {
-        dailyProfitBar.hidden = true;
-        dailyProfitBar.textContent = '';
-        dailyProfitBar.title = '';
+        dailyProfitValue.hidden = true;
+        dailyProfitValue.textContent = '';
+        dailyProfitValue.title = '';
         return;
       }
 
       const data = snapshot.groupDailyProfit || { total: null, groups: [] };
-      dailyProfitBar.hidden = false;
+      dailyProfitValue.hidden = false;
       if (data.total === null || !Number.isFinite(data.total)) {
-        dailyProfitBar.className = 'daily-profit-bar';
-        dailyProfitBar.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change flat">--</span>';
-        dailyProfitBar.title = '';
+        dailyProfitValue.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change flat">--</span>';
+        dailyProfitValue.title = '';
         return;
       }
 
       const total = data.total;
       const trend = total > 0 ? 'up' : total < 0 ? 'down' : 'flat';
       const text = formatSignedLargeAmount(total, snapshot.compactLargeAmounts);
-      dailyProfitBar.className = 'daily-profit-bar';
-      dailyProfitBar.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change ' + trend + '">' + escapeHtml(text) + '</span>';
+      dailyProfitValue.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change ' + trend + '">' + escapeHtml(text) + '</span>';
       const lines = data.groups
         .filter((g) => g.dailyProfit !== null && Number.isFinite(g.dailyProfit))
         .map((g) => g.name + ': ' + formatSignedLargeAmount(g.dailyProfit, snapshot.compactLargeAmounts));
-      dailyProfitBar.title = lines.length ? lines.join('\\n') : '';
+      dailyProfitValue.title = lines.length ? lines.join('\\n') : '';
     }
 
     function updateStaticLabels() {
-      refresh.title = t('refresh');
-      refresh.setAttribute('aria-label', t('refresh'));
-      importCsv.title = t('importCsv');
-      importCsv.setAttribute('aria-label', t('importCsv'));
-      exportCsv.title = t('exportCsv');
-      exportCsv.setAttribute('aria-label', t('exportCsv'));
-      aiAssistant.title = t('aiAssistant');
-      aiAssistant.setAttribute('aria-label', t('aiAssistant'));
       groupName.placeholder = t('addGroup');
       const addGroupButton = groupForm.querySelector('button[type="submit"]');
       if (addGroupButton) {

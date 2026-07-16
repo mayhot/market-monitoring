@@ -1,0 +1,11 @@
+{
+  "command.refresh": "刷新行情",
+  "command.refreshing": "刷新行情",
+  "command.importCsv": "导入 CSV",
+  "command.exportCsv": "导出 CSV",
+  "command.start": "启动",
+  "command.stop": "暂停",
+  "command.configureQuoteColumns": "配置行情列",
+  "command.openSettings": "打开设置",
+  "command.addGroup": "新增分组"
+}

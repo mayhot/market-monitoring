@@ -26,50 +26,56 @@
     "onCommand:marketMonitoring.start",
     "onCommand:marketMonitoring.stop",
     "onCommand:marketMonitoring.configureQuoteColumns",
-    "onCommand:marketMonitoring.openSettings"
+    "onCommand:marketMonitoring.openSettings",
+    "onCommand:marketMonitoring.addGroup"
   ],
   "main": "./src/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "marketMonitoring.refresh",
-        "title": "Market Monitoring: Refresh Quotes",
+        "title": "%command.refresh%",
         "icon": "$(refresh)"
       },
       {
         "command": "marketMonitoring.refreshing",
-        "title": "Market Monitoring: Refresh Quotes",
+        "title": "%command.refreshing%",
         "icon": "$(sync~spin)"
       },
       {
         "command": "marketMonitoring.importCsv",
-        "title": "Market Monitoring: Import CSV",
+        "title": "%command.importCsv%",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "marketMonitoring.exportCsv",
-        "title": "Market Monitoring: Export CSV",
+        "title": "%command.exportCsv%",
         "icon": "$(export)"
       },
       {
         "command": "marketMonitoring.start",
-        "title": "Market Monitoring: Start",
+        "title": "%command.start%",
         "icon": "$(play)"
       },
       {
         "command": "marketMonitoring.stop",
-        "title": "Market Monitoring: Stop",
+        "title": "%command.stop%",
         "icon": "$(debug-pause)"
       },
       {
         "command": "marketMonitoring.configureQuoteColumns",
-        "title": "Market Monitoring: Configure Quote Columns",
+        "title": "%command.configureQuoteColumns%",
         "icon": "$(list-ordered)"
       },
       {
         "command": "marketMonitoring.openSettings",
-        "title": "Market Monitoring: Open Settings",
+        "title": "%command.openSettings%",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "marketMonitoring.addGroup",
+        "title": "%command.addGroup%",
+        "icon": "$(add)"
       }
     ],
     "viewsContainers": {
@@ -94,34 +100,49 @@
     "menus": {
       "view/title": [
         {
-          "command": "marketMonitoring.refresh",
-          "when": "view == marketMonitoring.quotesView && !marketMonitoring.isRefreshing",
-          "group": "navigation"
+          "command": "marketMonitoring.start",
+          "when": "view == marketMonitoring.quotesView && !marketMonitoring.isRunning",
+          "group": "navigation@1"
         },
         {
-          "command": "marketMonitoring.refreshing",
-          "when": "view == marketMonitoring.quotesView && marketMonitoring.isRefreshing",
-          "group": "navigation"
+          "command": "marketMonitoring.stop",
+          "when": "view == marketMonitoring.quotesView && marketMonitoring.isRunning",
+          "group": "navigation@1"
         },
         {
-          "command": "marketMonitoring.importCsv",
+          "command": "marketMonitoring.addGroup",
           "when": "view == marketMonitoring.quotesView",
-          "group": "navigation"
-        },
-        {
-          "command": "marketMonitoring.exportCsv",
-          "when": "view == marketMonitoring.quotesView",
-          "group": "navigation"
-        },
-        {
-          "command": "marketMonitoring.configureQuoteColumns",
-          "when": "view == marketMonitoring.quotesView",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "marketMonitoring.openSettings",
           "when": "view == marketMonitoring.quotesView",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "command": "marketMonitoring.refresh",
+          "when": "view == marketMonitoring.quotesView && !marketMonitoring.isRefreshing",
+          "group": "more@1"
+        },
+        {
+          "command": "marketMonitoring.refreshing",
+          "when": "view == marketMonitoring.quotesView && marketMonitoring.isRefreshing",
+          "group": "more@1"
+        },
+        {
+          "command": "marketMonitoring.importCsv",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "more@2"
+        },
+        {
+          "command": "marketMonitoring.exportCsv",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "more@3"
+        },
+        {
+          "command": "marketMonitoring.configureQuoteColumns",
+          "when": "view == marketMonitoring.quotesView",
+          "group": "more@4"
         }
       ],
       "commandPalette": [
@@ -149,6 +170,9 @@
         },
         {
           "command": "marketMonitoring.openSettings"
+        },
+        {
+          "command": "marketMonitoring.addGroup"
         }
       ]
     },

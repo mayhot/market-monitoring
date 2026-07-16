@@ -1,0 +1,11 @@
+{
+  "command.refresh": "Refresh Quotes",
+  "command.refreshing": "Refresh Quotes",
+  "command.importCsv": "Import CSV",
+  "command.exportCsv": "Export CSV",
+  "command.start": "Start",
+  "command.stop": "Stop",
+  "command.configureQuoteColumns": "Configure Quote Columns",
+  "command.openSettings": "Open Settings",
+  "command.addGroup": "Add Group"
+}
