@@ -1754,7 +1754,11 @@ class QuotesViewProvider {
       display: none !important;
     }
 
-    #refresh.spinning {
+    .refresh-icon {
+      display: inline-block;
+    }
+
+    #refresh.spinning .refresh-icon {
       animation: mm-spin 0.8s linear infinite;
     }
 
@@ -2686,7 +2690,7 @@ class QuotesViewProvider {
   <div class="toolbar">
     <div class="phase" id="phase">未启动</div>
     <button class="icon-button" id="toggle" title="启动" aria-label="启动">▶</button>
-    <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新">↻</button>
+    <button class="secondary icon-button" id="refresh" title="刷新" aria-label="刷新"><span class="refresh-icon">↻</span></button>
     <button class="secondary icon-button" id="import-csv" title="导入 CSV" aria-label="导入 CSV">⇧</button>
     <button class="secondary icon-button" id="export-csv" title="导出 CSV" aria-label="导出 CSV">⇩</button>
     <button class="secondary icon-button" id="ai-assistant" title="AI" aria-label="AI" hidden>🤖</button>
