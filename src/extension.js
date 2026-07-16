@@ -1753,16 +1753,6 @@ class QuotesViewProvider {
       display: none !important;
     }
 
-    .phase {
-      flex: 1;
-      min-width: 0;
-      color: var(--muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-
     .group-form,
     .symbol-form {
       display: grid;
@@ -2583,19 +2573,6 @@ class QuotesViewProvider {
       ime-mode: disabled;
     }
 
-    .phase-bar {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      padding: 4px 8px;
-      min-width: 0;
-      max-width: 100%;
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      font-size: 12px;
-    }
-
-
     .index-dock {
       display: grid;
       grid-template-columns: minmax(0, 1fr) max-content;
@@ -2738,9 +2715,6 @@ class QuotesViewProvider {
   </form>
   <section class="ai-panel" id="ai-panel" hidden></section>
   <main id="app"></main>
-  <div id="phase-bar" class="phase-bar">
-    <div class="phase" id="phase">未启动</div>
-  </div>
   <footer class="index-dock">
     <div id="refresh-error" class="footer-status" hidden></div>
     <div class="index-widget">
@@ -2767,7 +2741,6 @@ class QuotesViewProvider {
         marketBreadthDown: '\u8dcc',
         marketBreadthFlat: '\u5e73',
         marketBreadthLabel: '涨跌家数：',
-        refreshing: '刷新中',
         noSymbols: '暂无标的，请在设置中配置 marketMonitoring.symbols。',
         tableColumns: '表格列',
         language: '语言',
@@ -2844,7 +2817,6 @@ class QuotesViewProvider {
         marketBreadthDown: 'Down',
         marketBreadthFlat: 'Flat',
         marketBreadthLabel: 'Breadth: ',
-        refreshing: 'Refreshing',
         noSymbols: 'No symbols yet. Configure marketMonitoring.symbols in settings.',
         tableColumns: 'Table columns',
         language: 'Language',
@@ -2910,7 +2882,6 @@ class QuotesViewProvider {
     };
     let viewState = vscode.getState() || {};
     const app = document.getElementById('app');
-    const phase = document.getElementById('phase');
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
@@ -3419,8 +3390,6 @@ class QuotesViewProvider {
       dynamicColors.textContent = ':root{--up:' + snapshot.colors.up + ';--down:' + snapshot.colors.down + ';--flat:' + snapshot.colors.flat + ';--group-stat-up:' + groupStatUp + ';--group-stat-down:' + groupStatDown + ';--row-highlight-up:' + rowHighlightUp + ';--row-highlight-down:' + rowHighlightDown + ';}';
       renderAiPanel(snapshot);
 
-      const extra = snapshot.updatedAt ? ' · ' + snapshot.updatedAt : '';
-      phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
       renderFooterStatus(snapshot);
       if (shouldFreezeQuoteRender()) {
@@ -3484,23 +3453,6 @@ class QuotesViewProvider {
         addGroupButton.title = t('addGroup');
         addGroupButton.setAttribute('aria-label', t('addGroup'));
       }
-    }
-
-    function localizePhase(value) {
-      const phaseMap = {
-        '未启动': { 'zh-CN': '未启动', 'en-US': 'Not started' },
-        '已暂停': { 'zh-CN': '已暂停', 'en-US': 'Paused' },
-        '休市': { 'zh-CN': '休市', 'en-US': 'Closed' },
-        '开盘集合竞价': { 'zh-CN': '开盘集合竞价', 'en-US': 'Opening call auction' },
-        '竞价撮合': { 'zh-CN': '竞价撮合', 'en-US': 'Auction matching' },
-        '上午连续竞价': { 'zh-CN': '上午连续竞价', 'en-US': 'Morning continuous auction' },
-        '午间休市': { 'zh-CN': '午间休市', 'en-US': 'Midday break' },
-        '下午连续竞价': { 'zh-CN': '下午连续竞价', 'en-US': 'Afternoon continuous auction' },
-        '收盘集合竞价': { 'zh-CN': '收盘集合竞价', 'en-US': 'Closing call auction' },
-        '非交易时段': { 'zh-CN': '非交易时段', 'en-US': 'Non-trading session' }
-      };
-      const translated = phaseMap[value];
-      return translated ? translated[locale] || translated['zh-CN'] : value;
     }
 
     function renderAiPanel(snapshot) {
