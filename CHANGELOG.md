@@ -8,6 +8,21 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.3.14] - 2026-07-16
+
+### Added
+
+- The view title refresh button now shows a spinning animation while a refresh is in progress. A `marketMonitoring.refreshing` command with a `$(refresh~spin)` icon is toggled via a `marketMonitoring.isRefreshing` context key during refresh start/end.
+
+### Fixed
+
+- Clicking the refresh button in the view title bar now always performs a refresh, regardless of pause state (view hidden/collapsed, editing, or configuration in progress). Previously a `force` refresh could be skipped when `isRefreshPaused()` was true; now only `notRunning` and `alreadyRefreshing` remain as skip conditions. The same fix applies to the market breadth refresh path.
+- Fixed the AI assistant button remaining visible despite having the `hidden` attribute. The `.icon-button` CSS `display: inline-flex` was overriding the browser's default `[hidden] { display: none }` behavior; added a global `[hidden] { display: none !important }` rule.
+
+### Changed
+
+- Bumped the extension version from `0.3.13` to `0.3.14`.
+
 ## [0.3.13] - 2026-07-15
 
 ### Fixed
