@@ -1454,8 +1454,6 @@ class MarketMonitor {
       rowHighlight: this.config.rowHighlight,
       quoteColumns: this.config.quoteColumns,
       groupSummaryMetrics: this.config.groupSummaryMetrics,
-      showGroupDailyProfitBar: this.config.showGroupDailyProfitBar,
-      groupDailyProfit: buildGroupDailyProfitSummary(groupsWithSummaryDrawdown),
       showMarketBreadth: this.config.showMarketBreadth,
       marketBreadth: this.marketBreadth,
       symbolCount: this.config.symbols.length,
@@ -1764,13 +1762,6 @@ class QuotesViewProvider {
       white-space: nowrap;
     }
 
-    .daily-profit-value {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-    }
 
     .group-form,
     .symbol-form {
@@ -2592,12 +2583,10 @@ class QuotesViewProvider {
       ime-mode: disabled;
     }
 
-    .daily-profit-bar {
+    .phase-bar {
       flex: 0 0 auto;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 6px;
       padding: 4px 8px;
       min-width: 0;
       max-width: 100%;
@@ -2606,9 +2595,6 @@ class QuotesViewProvider {
       font-size: 12px;
     }
 
-    .daily-profit-bar .daily-profit-label {
-      opacity: 0.8;
-    }
 
     .index-dock {
       display: grid;
@@ -2752,9 +2738,8 @@ class QuotesViewProvider {
   </form>
   <section class="ai-panel" id="ai-panel" hidden></section>
   <main id="app"></main>
-  <div id="daily-profit-bar" class="daily-profit-bar">
+  <div id="phase-bar" class="phase-bar">
     <div class="phase" id="phase">未启动</div>
-    <div class="daily-profit-value" id="daily-profit-value" hidden></div>
   </div>
   <footer class="index-dock">
     <div id="refresh-error" class="footer-status" hidden></div>
@@ -2794,7 +2779,6 @@ class QuotesViewProvider {
         expand: '展开',
         collapse: '折叠',
         currentAssets: '当前总资产',
-        dailyProfitSummary: '按涨跌额 * 持仓汇总',
         groupSummary: '分组汇总',
         groupSummaryHigh: '最高点',
         groupSummaryCurrent: '当前值',
@@ -2803,7 +2787,6 @@ class QuotesViewProvider {
         showMetric: '显示',
         totalAssets: '总资产',
         dailyProfit: '今日收益',
-        groupDailyProfitTotal: '今日收益',
         dailyProfitPercent: '今日收益率',
         groupName: '分组名称',
         saveGroupName: '保存分组名称',
@@ -2873,7 +2856,6 @@ class QuotesViewProvider {
         expand: 'Expand',
         collapse: 'Collapse',
         currentAssets: 'Current assets',
-        dailyProfitSummary: 'Summary by price change * holding',
         groupSummary: 'Group summary',
         groupSummaryHigh: 'High',
         groupSummaryCurrent: 'Current',
@@ -2882,7 +2864,6 @@ class QuotesViewProvider {
         showMetric: 'Show',
         totalAssets: 'Total assets',
         dailyProfit: 'Today profit',
-        groupDailyProfitTotal: 'Today profit',
         dailyProfitPercent: 'Today profit %',
         groupName: 'Group name',
         saveGroupName: 'Save group name',
@@ -2935,7 +2916,6 @@ class QuotesViewProvider {
     const aiPanel = document.getElementById('ai-panel');
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
-    const dailyProfitValue = document.getElementById('daily-profit-value');
     const dynamicColors = document.getElementById('dynamic-colors');
     let locale = 'zh-CN';
     let editingGroups = viewState.editingGroups || {};
@@ -3443,7 +3423,6 @@ class QuotesViewProvider {
       phase.textContent = (snapshot.loading ? t('refreshing') + ' · ' : '') + localizePhase(snapshot.phaseName) + extra;
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
       renderFooterStatus(snapshot);
-      renderDailyProfitBar(snapshot);
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
         if (flashGroupNames) {
@@ -3497,31 +3476,6 @@ class QuotesViewProvider {
       refreshError.className = 'footer-status';
     }
 
-    function renderDailyProfitBar(snapshot) {
-      if (!snapshot || !snapshot.showGroupDailyProfitBar) {
-        dailyProfitValue.hidden = true;
-        dailyProfitValue.textContent = '';
-        dailyProfitValue.title = '';
-        return;
-      }
-
-      const data = snapshot.groupDailyProfit || { total: null, groups: [] };
-      dailyProfitValue.hidden = false;
-      if (data.total === null || !Number.isFinite(data.total)) {
-        dailyProfitValue.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change flat">--</span>';
-        dailyProfitValue.title = '';
-        return;
-      }
-
-      const total = data.total;
-      const trend = total > 0 ? 'up' : total < 0 ? 'down' : 'flat';
-      const text = formatSignedLargeAmount(total, snapshot.compactLargeAmounts);
-      dailyProfitValue.innerHTML = '<span class="daily-profit-label">' + escapeHtml(t('groupDailyProfitTotal')) + '</span> <span class="quote-change ' + trend + '">' + escapeHtml(text) + '</span>';
-      const lines = data.groups
-        .filter((g) => g.dailyProfit !== null && Number.isFinite(g.dailyProfit))
-        .map((g) => g.name + ': ' + formatSignedLargeAmount(g.dailyProfit, snapshot.compactLargeAmounts));
-      dailyProfitValue.title = lines.length ? lines.join('\\n') : '';
-    }
 
     function updateStaticLabels() {
       groupName.placeholder = t('addGroup');
@@ -4765,7 +4719,6 @@ function readConfig() {
     marketBreadthRefreshIntervalSeconds: sanitizeMarketBreadthRefreshIntervalSeconds(config.get('marketBreadthRefreshIntervalSeconds', 300)),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
     showStatusBar: config.get('showStatusBar', false),
-    showGroupDailyProfitBar: config.get('showGroupDailyProfitBar', false),
     indexSymbol: sanitizeSelectedIndexCode(config.get('indexSymbol', DEFAULT_INDEX_CODE)) || DEFAULT_INDEX_CODE,
     sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
@@ -9288,23 +9241,6 @@ function hasGroupPortfolioSummaryValue(summary) {
   return summary.totalAssets !== null
     || summary.dailyProfit !== null
     || summary.dailyProfitPercent !== null;
-}
-
-function buildGroupDailyProfitSummary(groups) {
-  let total = 0;
-  let hasValue = false;
-  const items = [];
-  for (const group of groups) {
-    const summary = calculateGroupPortfolioSummaryValue(group.items);
-    if (summary.dailyProfit === null || !Number.isFinite(summary.dailyProfit)) {
-      items.push({ name: group.name, dailyProfit: null });
-      continue;
-    }
-    total += summary.dailyProfit;
-    hasValue = true;
-    items.push({ name: group.name, dailyProfit: summary.dailyProfit });
-  }
-  return { total: hasValue ? total : null, groups: items };
 }
 
 function toCsv(rows) {

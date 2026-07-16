@@ -252,11 +252,6 @@
           "default": false,
           "description": "Show a compact market summary in the VS Code status bar."
         },
-        "marketMonitoring.showGroupDailyProfitBar": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show a bar above the index dock in the market panel that displays the total daily profit (sum of change * holding across all groups) of all groups."
-        },
         "marketMonitoring.indexSymbol": {
           "type": "string",
           "default": "sh000001",
