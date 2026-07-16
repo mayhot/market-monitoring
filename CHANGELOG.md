@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.4.0] - 2026-07-16
+
+### Removed
+
+- Removed the daily profit bar (the row showing the total "today profit" summed across all groups) above the index dock in the market panel, along with the `marketMonitoring.showGroupDailyProfitBar` config option. The per-group `dailyProfit` / `dailyProfitPercent` summary metrics are still available via `groupSummaryMetrics`.
+- Removed the refresh phase info bar (the row showing "Not started" / "Refreshing · Trading · <time>" etc.) above the index dock in the market panel. The refresh animation on the view title button and the refresh error status in the footer left cell are unchanged.
+
+### Changed
+
+- Bumped the extension version from `0.3.14` to `0.4.0`.
+
 ## [0.3.14] - 2026-07-16
 
 ### Added
