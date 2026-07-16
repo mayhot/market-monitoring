@@ -1996,6 +1996,16 @@ class QuotesViewProvider {
       min-width: 0;
       max-width: 100%;
       background: var(--surface);
+      position: relative;
+    }
+
+    .group.menu-open {
+      z-index: 50;
+    }
+
+    .group .icon-button,
+    .group .group-menu-item {
+      border-color: transparent;
     }
 
     .quote-table {
@@ -2044,6 +2054,71 @@ class QuotesViewProvider {
       width: 22px;
       height: 22px;
       font-size: 12px;
+    }
+
+    .group-menu {
+      position: relative;
+    }
+
+    .group-menu > summary {
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .group-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .group-menu > summary::marker {
+      content: '';
+    }
+
+    .group-menu-dropdown {
+      position: absolute;
+      right: 0;
+      top: 100%;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      min-width: 140px;
+    }
+
+    .group-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      height: 26px;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      background: transparent;
+      color: var(--vscode-foreground);
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .group-menu-item:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .group-menu-icon {
+      flex: 0 0 auto;
+      width: 16px;
+      text-align: center;
+    }
+
+    .group-menu-label {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
     }
 
     .group-title-main {
@@ -2743,6 +2818,7 @@ class QuotesViewProvider {
         groupName: '分组名称',
         saveGroupName: '保存分组名称',
         deleteGroup: '删除分组',
+        more: '更多',
         collapseAdd: '收起添加',
         addSymbol: '添加标的',
         risingCount: '上升数',
@@ -2827,6 +2903,7 @@ class QuotesViewProvider {
         groupName: 'Group name',
         saveGroupName: 'Save group name',
         deleteGroup: 'Delete group',
+        more: 'More',
         collapseAdd: 'Collapse add form',
         addSymbol: 'Add symbol',
         risingCount: 'Rising',
@@ -2930,6 +3007,23 @@ class QuotesViewProvider {
         syncEditingState();
       }
     });
+    document.addEventListener('click', (event) => {
+      document.querySelectorAll('details.group-menu[open]').forEach((details) => {
+        if (!details.contains(event.target)) {
+          details.open = false;
+        }
+      });
+    });
+    document.addEventListener('toggle', (event) => {
+      const details = event.target;
+      if (!details || !details.classList || !details.classList.contains('group-menu')) {
+        return;
+      }
+      const group = details.closest('.group');
+      if (group) {
+        group.classList.toggle('menu-open', details.open);
+      }
+    }, true);
     app.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) {
@@ -3759,8 +3853,7 @@ class QuotesViewProvider {
               groupStats +
             '</span>' +
             '<span class="group-title-actions">' +
-              renderGroupAddButton(group.name, adding) +
-              renderGroupEditButton(group.name, editing) +
+              renderGroupMenu(group.name, editing, adding) +
             '</span>' +
           '</div>' +
           renderGroupInlinePanel(group.name, editing, adding) +
@@ -3957,6 +4050,20 @@ class QuotesViewProvider {
 
     function renderGroupEditButton(groupName, editing) {
       return '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '" aria-label="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '">' + (editing ? '✓' : '✎') + '</button>';
+    }
+
+    function renderGroupMenu(groupName, editing, adding) {
+      return '<details class="group-menu">' +
+        '<summary class="secondary icon-button" title="' + escapeHtml(t('more')) + '" aria-label="' + escapeHtml(t('more')) + '">⋯</summary>' +
+        '<div class="group-menu-dropdown">' +
+          renderGroupMenuItem('addToGroup', groupName, adding ? '−' : '＋', adding ? t('collapseAdd') : t('addSymbol')) +
+          renderGroupMenuItem('editGroup', groupName, editing ? '✓' : '✎', editing ? t('doneEditing') : t('editGroup')) +
+        '</div>' +
+      '</details>';
+    }
+
+    function renderGroupMenuItem(action, groupName, icon, label) {
+      return '<button class="secondary group-menu-item" data-action="' + action + '" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '"><span class="group-menu-icon">' + icon + '</span><span class="group-menu-label">' + escapeHtml(label) + '</span></button>';
     }
 
     function renderGroupSymbolSearch(groupName) {
