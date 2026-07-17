@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,9 @@
     "onCommand:marketMonitoring.stop",
     "onCommand:marketMonitoring.configureQuoteColumns",
     "onCommand:marketMonitoring.openSettings",
-    "onCommand:marketMonitoring.addGroup"
+    "onCommand:marketMonitoring.addGroup",
+    "onCommand:marketMonitoring.showAlerts",
+    "onCommand:marketMonitoring.showAlertsActive"
   ],
   "main": "./src/extension.js",
   "contributes": {
@@ -76,6 +78,16 @@
         "command": "marketMonitoring.addGroup",
         "title": "%command.addGroup%",
         "icon": "$(add)"
+      },
+      {
+        "command": "marketMonitoring.showAlerts",
+        "title": "%command.showAlerts%",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "marketMonitoring.showAlertsActive",
+        "title": "%command.showAlerts%",
+        "icon": "$(bell-dot)"
       }
     ],
     "viewsContainers": {
@@ -112,6 +124,16 @@
         {
           "command": "marketMonitoring.addGroup",
           "when": "view == marketMonitoring.quotesView",
+          "group": "more@5"
+        },
+        {
+          "command": "marketMonitoring.showAlerts",
+          "when": "view == marketMonitoring.quotesView && !marketMonitoring.hasAlerts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "marketMonitoring.showAlertsActive",
+          "when": "view == marketMonitoring.quotesView && marketMonitoring.hasAlerts",
           "group": "navigation@2"
         },
         {
@@ -173,6 +195,13 @@
         },
         {
           "command": "marketMonitoring.addGroup"
+        },
+        {
+          "command": "marketMonitoring.showAlerts"
+        },
+        {
+          "command": "marketMonitoring.showAlertsActive",
+          "when": "false"
         }
       ]
     },
@@ -479,6 +508,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show VS Code notifications when quote alerts are newly triggered."
+        },
+        "marketMonitoring.alertResubmissionDeviationPercent": {
+          "type": "number",
+          "default": 1,
+          "description": "Minimum deviation (in percent) required before re-triggering the same alert within the same trading day. For price-based alerts this is relative price change; for percentage-based alerts this is absolute percentage-point change. Set to 0 to disable deduplication."
         },
         "marketMonitoring.defaultMonitoringIndicators": {
           "type": "array",

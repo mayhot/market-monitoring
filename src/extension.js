@@ -110,6 +110,8 @@ function activate(context) {
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
     vscode.commands.registerCommand('marketMonitoring.stop', () => monitor.stop(true)),
     vscode.commands.registerCommand('marketMonitoring.addGroup', () => monitor.showAddGroup()),
+    vscode.commands.registerCommand('marketMonitoring.showAlerts', () => monitor.showAlerts()),
+    vscode.commands.registerCommand('marketMonitoring.showAlertsActive', () => monitor.showAlerts()),
     vscode.commands.registerCommand('marketMonitoring.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${getExtensionId(context)}`);
     }),
@@ -291,6 +293,7 @@ class MarketMonitor {
     this.lastQuotes = cachedSnapshot.quotes;
     this.groupStatsQuotes = cachedSnapshot.quotes;
     this.triggeredAlerts = [];
+    this.rawTriggeredAlerts = [];
     this.activeAlertKeys = new Set();
     this.groupSummaryHighWaterMarks = new Map();
     this.marketBreadth = createEmptyMarketBreadth();
@@ -357,6 +360,10 @@ class MarketMonitor {
 
   showAddGroup() {
     this.provider.postShowAddGroup();
+  }
+
+  showAlerts() {
+    this.provider.postShowAlerts(this.rawTriggeredAlerts);
   }
 
   reloadConfiguration(reason = 'configurationChanged') {
@@ -1325,6 +1332,7 @@ class MarketMonitor {
     }
     if (!this.config.enableAlerts) {
       this.triggeredAlerts = [];
+    this.rawTriggeredAlerts = [];
       this.lastAlertEvaluationKey = evaluationKey;
       this.logInfo('Alerts skipped', {
         reason: 'disabled'
@@ -1334,13 +1342,17 @@ class MarketMonitor {
 
     this.activeAlertEvaluationKey = evaluationKey;
     this.alertEvaluationPromise = (async () => {
-      this.triggeredAlerts = await evaluateAlerts(this.groupStatsQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, this.database, (message, details) => this.logInfo(message, details));
+      const rawAlerts = await evaluateAlerts(this.groupStatsQuotes, this.config.alerts, this.config.priceDecimalPlaces, this.config.requestTimeoutMs, this.dailyKlineCache, this.intradayTrendState, this.database, (message, details) => this.logInfo(message, details));
+      this.rawTriggeredAlerts = rawAlerts;
+      this.triggeredAlerts = await this.filterSuppressedAlerts(rawAlerts);
       this.lastAlertEvaluationKey = evaluationKey;
       this.logInfo('Alerts evaluated', {
         reason,
         rules: this.config.alerts.length,
         ruleTypes: summarizeAlertRules(this.config.alerts),
+        raw: rawAlerts.length,
         triggered: this.triggeredAlerts.length,
+        suppressed: rawAlerts.length - this.triggeredAlerts.length,
         quotes: this.groupStatsQuotes.length,
         cachedAt: this.lastUpdatedAt || ''
       });
@@ -1355,6 +1367,79 @@ class MarketMonitor {
         this.alertEvaluationPromise = undefined;
       }
     }
+  }
+
+  async filterSuppressedAlerts(alerts) {
+    if (!this.database || !Array.isArray(alerts) || alerts.length === 0) {
+      return alerts;
+    }
+    const today = getShanghaiDateString();
+    const isTradingActive = getMarketPhase(mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS)).isActive;
+    const keys = alerts.map((a) => a.key);
+    let records = {};
+    try {
+      records = await this.database.readAlertRecords(keys);
+    } catch (error) {
+      this.logError('Failed to read alert records for dedup', { error: String(error) });
+      return alerts;
+    }
+
+    if (!isTradingActive) {
+      const hasTodayRecords = Object.values(records).some((r) => r.date === today);
+      if (hasTodayRecords) {
+        this.logInfo('Alerts suppressed (non-trading, already alerted today)', {
+          raw: alerts.length
+        });
+        return [];
+      }
+      const toUpsert = alerts.map((alert) => ({
+        key: alert.key,
+        code: alert.code,
+        value: alert.value,
+        triggeredAt: alert.triggeredAt,
+        date: today
+      }));
+      try {
+        await this.database.upsertAlertRecords(toUpsert);
+      } catch (error) {
+        this.logError('Failed to upsert alert records', { error: String(error) });
+      }
+      return alerts;
+    }
+
+    const threshold = this.config.alertResubmissionDeviationPercent;
+    const kept = [];
+    const toUpsert = [];
+    let suppressed = 0;
+    for (const alert of alerts) {
+      const lastRecord = records[alert.key];
+      if (lastRecord && lastRecord.date === today && shouldSuppressAlert(alert, lastRecord, threshold)) {
+        suppressed++;
+        continue;
+      }
+      kept.push(alert);
+      toUpsert.push({
+        key: alert.key,
+        code: alert.code,
+        value: alert.value,
+        triggeredAt: alert.triggeredAt,
+        date: today
+      });
+    }
+
+    if (suppressed > 0) {
+      this.logInfo('Alerts suppressed by dedup', { suppressed, threshold });
+    }
+
+    if (toUpsert.length > 0) {
+      try {
+        await this.database.upsertAlertRecords(toUpsert);
+      } catch (error) {
+        this.logError('Failed to upsert alert records', { error: String(error) });
+      }
+    }
+
+    return kept;
   }
 
   schedule() {
@@ -1372,6 +1457,7 @@ class MarketMonitor {
     const snapshot = this.createSnapshot(phaseName, loading);
     this.provider.update(snapshot);
     this.updateStatusBar(snapshot);
+    vscode.commands.executeCommand('setContext', 'marketMonitoring.hasAlerts', snapshot.alerts.length > 0);
   }
 
   updateStatusBar(snapshot) {
@@ -1382,7 +1468,6 @@ class MarketMonitor {
 
     const pricedQuotes = snapshot.groups.flatMap((group) => group.items).filter((quote) => Number.isFinite(getQuoteDisplayChangePercent(quote)));
     const head = pricedQuotes.slice(0, 3);
-    const alertCount = snapshot.alerts.length;
 
     if (!this.running) {
       this.statusBarItem.text = '$(graph-line) Market 已暂停';
@@ -1393,7 +1478,7 @@ class MarketMonitor {
     }
 
     if (head.length === 0) {
-      this.statusBarItem.text = alertCount > 0 ? `$(warning) Market ${alertCount}` : `$(graph-line) Market ${snapshot.phaseName}`;
+      this.statusBarItem.text = `$(graph-line) Market ${snapshot.phaseName}`;
       this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
       this.statusBarItem.color = undefined;
       this.statusBarItem.show();
@@ -1402,13 +1487,11 @@ class MarketMonitor {
 
     const average = head.reduce((sum, quote) => sum + getQuoteDisplayChangePercent(quote), 0) / head.length;
     const summary = head.map((quote) => `${quote.name} ${formatPercent(getQuoteDisplayChangePercent(quote))}`).join(' ');
-    this.statusBarItem.text = alertCount > 0 ? `$(warning) ${alertCount} ${summary}` : `$(graph-line) ${summary}`;
+    this.statusBarItem.text = `$(graph-line) ${summary}`;
     this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
     this.statusBarItem.color = snapshot.colors.mode === 'none'
       ? undefined
-      : alertCount > 0
-        ? snapshot.colors.up
-        : getTrendColor(average, snapshot.colors);
+      : getTrendColor(average, snapshot.colors);
     this.statusBarItem.show();
   }
 
@@ -1458,7 +1541,7 @@ class MarketMonitor {
   }
 
   createSnapshot(phaseName, loading = false) {
-    const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes);
+    const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.rawTriggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes);
     const groupsWithSummaryDrawdown = this.attachGroupSummaryDrawdowns(groups);
     const isTradingActive = getMarketPhase(mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS)).isActive;
     return {
@@ -1676,6 +1759,13 @@ class QuotesViewProvider {
     }
   }
 
+  postShowAlerts(alerts) {
+    if (this.view) {
+      this.view.show(true);
+      this.view.webview.postMessage({ type: 'showAlerts', alerts: Array.isArray(alerts) ? alerts : [] });
+    }
+  }
+
   getHtml(webview) {
     const nonce = createNonce();
     const cspSource = webview.cspSource;
@@ -1796,6 +1886,241 @@ class QuotesViewProvider {
 
     .group-form {
       grid-template-columns: minmax(0, 1fr) 30px;
+    }
+
+    .alert-panel {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+    }
+
+    .alert-panel[hidden] {
+      display: none !important;
+    }
+
+    .alert-panel-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .alert-panel-content {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      left: 8px;
+      max-height: 70vh;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--vscode-sideBar-background);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .alert-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-soft);
+      font-weight: 600;
+    }
+
+    .alert-panel-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .alert-panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+
+    .alert-group {
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+    }
+
+    .alert-group:last-child {
+      border-bottom: none;
+    }
+
+    .alert-group-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      background: none;
+      color: inherit;
+      cursor: pointer;
+      font-size: 12px;
+      text-align: left;
+    }
+
+    .alert-group-header:hover {
+      background: var(--surface-hover);
+    }
+
+    .alert-group-arrow {
+      display: inline-block;
+      width: 12px;
+      text-align: center;
+      transition: transform 0.15s ease;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .alert-group.collapsed .alert-group-arrow {
+      transform: rotate(-90deg);
+    }
+
+    .alert-group-name {
+      flex: 1;
+      min-width: 0;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .alert-group-count {
+      flex-shrink: 0;
+      min-width: 18px;
+      height: 18px;
+      line-height: 18px;
+      text-align: center;
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--muted) 15%, transparent);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 0 4px;
+    }
+
+    .alert-group-count.unread {
+      background: color-mix(in srgb, var(--up) 20%, transparent);
+      color: var(--up);
+    }
+
+    .alert-group-body {
+      overflow: hidden;
+    }
+
+    .alert-group.collapsed .alert-group-body {
+      display: none;
+    }
+
+    .alert-panel-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    .alert-panel-item:hover {
+      background: var(--surface-hover);
+    }
+
+    .alert-panel-item.unread {
+      background: color-mix(in srgb, var(--up) 6%, transparent);
+    }
+
+    .alert-panel-item.unread:hover {
+      background: color-mix(in srgb, var(--up) 10%, transparent);
+    }
+
+    .alert-unread-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--up);
+      flex-shrink: 0;
+    }
+
+    .alert-unread-dot.read {
+      background: transparent;
+    }
+
+    .alert-panel-item.unread .alert-panel-item-label {
+      font-weight: 700;
+    }
+
+    .alert-panel-item:not(.unread) .alert-panel-item-label {
+      opacity: 0.7;
+    }
+
+    .alert-panel-item:last-child {
+      border-bottom: none;
+    }
+
+    .alert-panel-item-name {
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .alert-panel-item-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .alert-panel-item-time {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .alert-panel-item-label {
+      color: var(--up);
+      font-size: 12px;
+    }
+
+    .alert-panel-item-message {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .alert-panel-empty {
+      padding: 24px 10px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    @keyframes alert-panel-enter {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .alert-panel:not([hidden]) .alert-panel-content {
+      animation: alert-panel-enter 0.15s ease-out;
+    }
+
+    @keyframes alert-badge-pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
     }
 
     .ai-panel {
@@ -2778,6 +3103,16 @@ class QuotesViewProvider {
     <button class="secondary icon-button" type="submit" title="新增分组" aria-label="新增分组">＋</button>
   </form>
   <section class="ai-panel" id="ai-panel" hidden></section>
+  <section class="alert-panel" id="alert-panel" hidden>
+    <div class="alert-panel-backdrop" data-action="closeAlertPanel"></div>
+    <div class="alert-panel-content" role="dialog" aria-label="Alerts">
+      <header class="alert-panel-header">
+        <span class="alert-panel-title"></span>
+        <button class="secondary icon-button" data-action="closeAlertPanel" title="关闭" aria-label="关闭">×</button>
+      </header>
+      <div class="alert-panel-body"></div>
+    </div>
+  </section>
   <main id="app"></main>
   <footer class="index-dock">
     <span id="refresh-dot" class="refresh-dot idle" aria-hidden="true"></span>
@@ -2870,7 +3205,10 @@ class QuotesViewProvider {
         aiNotConfigured: '未配置 AI。请先配置 Provider、Model 和 API Key。',
         aiReady: '自然语言管理分组和标的',
         aiChanges: '修改',
-        aiWarnings: '提醒'
+        aiWarnings: '提醒',
+        alertPanelTitle: '预警详情',
+        alertPanelEmpty: '暂无预警',
+        alertPanelClose: '关闭'
       },
       'en-US': {
         notStarted: 'Not started',
@@ -2950,7 +3288,10 @@ class QuotesViewProvider {
         aiNotConfigured: 'AI is not configured. Configure Provider, Model, and API Key first.',
         aiReady: 'Manage groups and symbols with natural language',
         aiChanges: 'Changes',
-        aiWarnings: 'Warnings'
+        aiWarnings: 'Warnings',
+        alertPanelTitle: 'Alerts',
+        alertPanelEmpty: 'No alerts',
+        alertPanelClose: 'Close'
       }
     };
     let viewState = vscode.getState() || {};
@@ -2958,6 +3299,9 @@ class QuotesViewProvider {
     const groupForm = document.getElementById('group-form');
     const groupName = document.getElementById('group-name');
     const aiPanel = document.getElementById('ai-panel');
+    const alertPanel = document.getElementById('alert-panel');
+    const alertPanelBody = alertPanel ? alertPanel.querySelector('.alert-panel-body') : null;
+    const alertPanelTitle = alertPanel ? alertPanel.querySelector('.alert-panel-title') : null;
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
     const refreshDot = document.getElementById('refresh-dot');
@@ -2969,6 +3313,7 @@ class QuotesViewProvider {
     let aiOpen = Boolean(viewState.aiOpen);
     let tableSort = viewState.tableSort || {};
     let columnWidths = viewState.columnWidths || {};
+    let readAlertKeys = new Set(viewState.readAlertKeys || []);
     let resizingColumn;
     let symbolSearchTimer;
     let symbolSearchRequestId = 0;
@@ -3365,6 +3710,8 @@ class QuotesViewProvider {
         groupForm.hidden = false;
         groupName.value = '';
         groupName.focus();
+      } else if (event.data && event.data.type === 'showAlerts') {
+        showAlertPanel(event.data.alerts);
       }
     });
 
@@ -3377,6 +3724,113 @@ class QuotesViewProvider {
       const message = reason && reason.message ? reason.message : String(reason || 'Unhandled promise rejection');
       reportWebviewError(message, '', 0, 0);
     });
+
+    function showAlertPanel(alerts) {
+      if (!alertPanel || !alertPanelBody || !alertPanelTitle) {
+        return;
+      }
+      const list = Array.isArray(alerts) ? alerts : [];
+      alertPanelTitle.textContent = t('alertPanelTitle') + (list.length > 0 ? ' (' + list.length + ')' : '');
+      if (list.length === 0) {
+        alertPanelBody.innerHTML = '<div class="alert-panel-empty">' + escapeHtml(t('alertPanelEmpty')) + '</div>';
+      } else {
+        const groups = {};
+        const groupOrder = [];
+        for (const alert of list) {
+          const code = alert.code || alert.name || '';
+          if (!groups[code]) {
+            groups[code] = { name: alert.name || alert.code || '', items: [] };
+            groupOrder.push(code);
+          }
+          groups[code].items.push(alert);
+        }
+        alertPanelBody.innerHTML = groupOrder.map(function (code) {
+          const group = groups[code];
+          const groupName = escapeHtml(group.name);
+          const unreadCount = group.items.filter(function (a) { return !readAlertKeys.has(a.key); }).length;
+          const itemsHtml = group.items.map(function (alert) {
+            const label = escapeHtml(alert.label || '');
+            const message = escapeHtml(alert.message || '');
+            const time = alert.triggeredAt ? escapeHtml(alert.triggeredAt) : '';
+            const isRead = readAlertKeys.has(alert.key);
+            return '<div class="alert-panel-item' + (isRead ? '' : ' unread') + '" data-alert-key="' + escapeHtml(alert.key) + '">' +
+              '<div class="alert-panel-item-row">' +
+                '<span class="alert-unread-dot' + (isRead ? ' read' : '') + '" aria-hidden="true"></span>' +
+                '<span class="alert-panel-item-label">' + label + '</span>' +
+                (time ? '<span class="alert-panel-item-time">' + time + '</span>' : '') +
+              '</div>' +
+              (message ? '<span class="alert-panel-item-message">' + message + '</span>' : '') +
+            '</div>';
+          }).join('');
+          return '<div class="alert-group collapsed" data-code="' + escapeHtml(code) + '">' +
+            '<button type="button" class="alert-group-header" data-action="toggleAlertGroup" data-code="' + escapeHtml(code) + '">' +
+              '<span class="alert-group-arrow" aria-hidden="true">⌄</span>' +
+              '<span class="alert-group-name">' + groupName + '</span>' +
+              (unreadCount > 0
+                ? '<span class="alert-group-count unread">' + unreadCount + '</span>'
+                : '<span class="alert-group-count">' + group.items.length + '</span>') +
+            '</button>' +
+            '<div class="alert-group-body">' + itemsHtml + '</div>' +
+          '</div>';
+        }).join('');
+      }
+      alertPanel.hidden = false;
+    }
+
+    function closeAlertPanel() {
+      if (alertPanel) {
+        alertPanel.hidden = true;
+      }
+    }
+
+    if (alertPanel) {
+      alertPanel.addEventListener('click', function (event) {
+        const closeTarget = event.target.closest('[data-action="closeAlertPanel"]');
+        if (closeTarget) {
+          closeAlertPanel();
+          return;
+        }
+        const toggleTarget = event.target.closest('[data-action="toggleAlertGroup"]');
+        if (toggleTarget) {
+          const group = alertPanel.querySelector('.alert-group[data-code="' + CSS.escape(toggleTarget.dataset.code) + '"]');
+          if (group) {
+            group.classList.toggle('collapsed');
+          }
+          return;
+        }
+        const itemTarget = event.target.closest('[data-alert-key]');
+        if (itemTarget && alertPanelBody.contains(itemTarget)) {
+          const key = itemTarget.dataset.alertKey;
+          if (key && !readAlertKeys.has(key)) {
+            readAlertKeys.add(key);
+            itemTarget.classList.remove('unread');
+            const dot = itemTarget.querySelector('.alert-unread-dot');
+            if (dot) {
+              dot.classList.add('read');
+            }
+            const group = itemTarget.closest('.alert-group');
+            if (group) {
+              const remaining = group.querySelectorAll('.alert-panel-item.unread').length;
+              const countBadge = group.querySelector('.alert-group-count');
+              if (countBadge) {
+                if (remaining > 0) {
+                  countBadge.textContent = remaining;
+                } else {
+                  countBadge.textContent = group.querySelectorAll('.alert-panel-item').length;
+                  countBadge.classList.remove('unread');
+                }
+              }
+            }
+            persistViewState();
+          }
+        }
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && alertPanel && !alertPanel.hidden) {
+          closeAlertPanel();
+        }
+      });
+    }
 
     function renderActiveSymbolResults() {
       const container = Array.from(app.querySelectorAll('[data-symbol-results-group]')).find((item) => item.dataset.symbolResultsGroup === activeSymbolGroup);
@@ -3560,6 +4014,13 @@ class QuotesViewProvider {
       if (addGroupButton) {
         addGroupButton.title = t('addGroup');
         addGroupButton.setAttribute('aria-label', t('addGroup'));
+      }
+      if (alertPanel) {
+        const closeBtn = alertPanel.querySelector('[data-action="closeAlertPanel"]');
+        if (closeBtn) {
+          closeBtn.title = t('alertPanelClose');
+          closeBtn.setAttribute('aria-label', t('alertPanelClose'));
+        }
       }
     }
 
@@ -4570,7 +5031,8 @@ class QuotesViewProvider {
         aiPrompt,
         tableSort,
         columnWidths,
-        lastFlashedUpdatedAt
+        lastFlashedUpdatedAt,
+        readAlertKeys: Array.from(readAlertKeys)
       };
       vscode.setState(viewState);
       vscode.postMessage({
@@ -4596,6 +5058,7 @@ class QuotesViewProvider {
       tableSort = viewState.tableSort || {};
       columnWidths = viewState.columnWidths || {};
       lastFlashedUpdatedAt = viewState.lastFlashedUpdatedAt || '';
+      readAlertKeys = new Set(viewState.readAlertKeys || []);
       vscode.setState(viewState);
       syncCollapsedGroups();
       syncEditingState(true);
@@ -4779,6 +5242,7 @@ function readConfig() {
     locale: resolveLanguage(language),
     enableAlerts: config.get('enableAlerts', true),
     enableAlertNotifications: config.get('enableAlertNotifications', false),
+    alertResubmissionDeviationPercent: Math.max(0, Number(config.get('alertResubmissionDeviationPercent', 1)) || 0),
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
     marketBreadthRefreshIntervalSeconds: sanitizeMarketBreadthRefreshIntervalSeconds(config.get('marketBreadthRefreshIntervalSeconds', 300)),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
@@ -6724,6 +7188,35 @@ function normalizeCachedQuote(value) {
   };
 }
 
+const ALERT_PERCENT_TYPES = new Set([
+  'changePercentAbove', 'changePercentBelow',
+  'movingAverageS', 'expmaDeviationAbove', 'expmaDeviationBelow',
+  'intradayHighPullback', 'volumeDrop', 'reboundLowVolume'
+]);
+
+function calculateAlertDeviation(currentValue, lastValue, alertType) {
+  if (!Number.isFinite(currentValue) || !Number.isFinite(lastValue)) {
+    return Infinity;
+  }
+  if (ALERT_PERCENT_TYPES.has(alertType)) {
+    return Math.abs(currentValue - lastValue);
+  }
+  return Math.abs(currentValue - lastValue) / Math.max(Math.abs(lastValue), 0.01) * 100;
+}
+
+function shouldSuppressAlert(alert, lastRecord, thresholdPercent) {
+  if (!lastRecord) {
+    return false;
+  }
+  const currentValue = alert.value;
+  const lastValue = lastRecord.value;
+  if (currentValue === undefined || currentValue === null || lastValue === null || lastValue === undefined) {
+    return true;
+  }
+  const deviation = calculateAlertDeviation(currentValue, lastValue, alert.type);
+  return deviation < thresholdPercent;
+}
+
 async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dailyKlineCache, intradayTrendState, database, log) {
   if (!rules || rules.length === 0) {
     return [];
@@ -6747,6 +7240,11 @@ async function evaluateAlerts(quotes, rules, priceDecimalPlaces, timeoutMs, dail
     addAlertIfMet(alerts, quote, displayName, 'priceBelow', rule.priceBelow, quote.price, '价格 <=', priceDecimalPlaces);
     addAlertIfMet(alerts, quote, displayName, 'changePercentAbove', rule.changePercentAbove, quote.changePercent, '涨跌幅 >=', 2, '%');
     addAlertIfMet(alerts, quote, displayName, 'changePercentBelow', rule.changePercentBelow, quote.changePercent, '涨跌幅 <=', 2, '%');
+  }
+
+  const triggeredAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  for (const alert of alerts) {
+    alert.triggeredAt = triggeredAt;
   }
 
   return alerts;
@@ -6815,10 +7313,12 @@ function addAlertIfMet(alerts, quote, displayName, field, threshold, value, labe
 
   alerts.push({
     key: `${quote.code}:${field}:${formattedThreshold}`,
+    type: field,
     code: quote.code,
     name: displayName,
     label: alertLabel,
-    message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+    message: `${displayName} ${alertLabel}，当前 ${formattedValue}`,
+    value
   });
 }
 
@@ -7110,7 +7610,8 @@ function addMovingAverageBelowAlertIfMet(alerts, quote, displayName, rule, movin
       code: quote.code,
       name: displayName,
       label: alertLabel,
-      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`,
+      value: quote.price
     });
   }
 }
@@ -7148,7 +7649,8 @@ function addMovingAverageSAlertIfMet(alerts, quote, displayName, rule, movingAve
       code: quote.code,
       name: displayName,
       label: alertLabel,
-      message: `${displayName} ${alertLabel}，${snapshot.days}日线 ${formattedAverage}，当前 ${formattedValue}`
+      message: `${displayName} ${alertLabel}，${snapshot.days}日线 ${formattedAverage}，当前 ${formattedValue}`,
+      value: actualDeviationPercent
     });
   }
 }
@@ -7182,7 +7684,8 @@ function addMovingAverageHoldBelowAlertIfMet(alerts, quote, displayName, rule, m
       code: quote.code,
       name: displayName,
       label: alertLabel,
-      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`,
+      value: quote.price
     });
   }
 }
@@ -7216,7 +7719,8 @@ function addMovingAverageAboveAlertIfMet(alerts, quote, displayName, rule, movin
       code: quote.code,
       name: displayName,
       label: alertLabel,
-      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`,
+      value: quote.price
     });
   }
 }
@@ -7250,7 +7754,8 @@ function addMovingAverageHoldAboveAlertIfMet(alerts, quote, displayName, rule, m
       code: quote.code,
       name: displayName,
       label: alertLabel,
-      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`
+      message: `${displayName} ${alertLabel}，当前 ${formattedValue}`,
+      value: quote.price
     });
   }
 }
@@ -7458,7 +7963,8 @@ function addVolumeDropAlertIfMet(alerts, quote, displayName, rule, bars) {
     code: quote.code,
     name: displayName,
     label: `放量下跌 ${rule.volumeDropMultiplier.toFixed(1)}x`,
-    message: `${displayName} 放量下跌，跌幅 ${quote.changePercent.toFixed(2)}%，成交量约为 ${rule.volumeDropAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)} 倍`
+    message: `${displayName} 放量下跌，跌幅 ${quote.changePercent.toFixed(2)}%，成交量约为 ${rule.volumeDropAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)} 倍`,
+    value: quote.changePercent
   });
 }
 
@@ -7477,7 +7983,8 @@ function addReboundLowVolumeAlertIfMet(alerts, quote, displayName, rule, bars) {
     code: quote.code,
     name: displayName,
     label: `反弹缩量 ${(rule.reboundLowVolumeRatio * 100).toFixed(0)}%`,
-    message: `${displayName} 反弹缩量，涨幅 ${quote.changePercent.toFixed(2)}%，成交量仅为 ${rule.reboundLowVolumeAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)}`
+    message: `${displayName} 反弹缩量，涨幅 ${quote.changePercent.toFixed(2)}%，成交量仅为 ${rule.reboundLowVolumeAverageDays} 日均量的 ${(volumeSnapshot.current / volumeSnapshot.average).toFixed(2)}`,
+    value: quote.changePercent
   });
 }
 
@@ -7504,7 +8011,8 @@ function addLowBreakAlertIfMet(alerts, quote, displayName, rule, bars, priceDeci
     code: quote.code,
     name: displayName,
     label: `跌破${rule.lowBreakDays}日低点 ${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`,
-    message: `${displayName} 跌破${rule.lowBreakDays}日低点，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，前低 ${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`
+    message: `${displayName} 跌破${rule.lowBreakDays}日低点，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，前低 ${formatPriceDecimalFixed(lowest, priceDecimalPlaces)}`,
+    value: quote.price
   });
 }
 
@@ -7523,7 +8031,8 @@ function addRsiWeakAlertIfMet(alerts, quote, displayName, rule, bars) {
     code: quote.code,
     name: displayName,
     label: `RSI${rule.rsiDays} < ${rule.rsiBelow}`,
-    message: `${displayName} RSI 走弱，RSI${rule.rsiDays} ${rsi.toFixed(1)} < ${rule.rsiBelow}`
+    message: `${displayName} RSI 走弱，RSI${rule.rsiDays} ${rsi.toFixed(1)} < ${rule.rsiBelow}`,
+    value: rsi
   });
 }
 
@@ -7548,7 +8057,8 @@ function addBollingerBelowAlertIfMet(alerts, quote, displayName, rule, bars, pri
     code: quote.code,
     name: displayName,
     label: `${label} ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`,
-    message: `${displayName} ${label}，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，阈值 ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`
+    message: `${displayName} ${label}，当前 ${formatPriceDecimalFixed(quote.price, priceDecimalPlaces)}，阈值 ${formatPriceDecimalFixed(target, priceDecimalPlaces)}`,
+    value: quote.price
   });
 }
 
@@ -7579,7 +8089,8 @@ function addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, pri
       code: quote.code,
       name: displayName,
       label,
-      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`
+      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`,
+      value: deviationPercent
     });
   }
   if (deviationPercent <= -rule.expmaDeviationBelowPercent) {
@@ -7594,7 +8105,8 @@ function addExpmaDeviationAlertIfMet(alerts, quote, displayName, rule, bars, pri
       code: quote.code,
       name: displayName,
       label,
-      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`
+      message: `${displayName} ${label}，阈值 ${threshold}%，EXPMA ${formattedExpma}，当前 ${formattedPrice}`,
+      value: deviationPercent
     });
   }
 }
@@ -7647,7 +8159,8 @@ function addIntradayHighPullbackAlertIfMet(alerts, quote, displayName, rule, bar
     code: quote.code,
     name: displayName,
     label: alertLabel,
-    message: `${displayName} 当日最高价高于开盘价后转为下跌，从最高点 ${formatPriceDecimalFixed(currentBar.high, priceDecimalPlaces)} 回落 ${pullbackPercent.toFixed(2)}%，开盘 ${formatPriceDecimalFixed(currentBar.open, priceDecimalPlaces)}，${priceLabel} ${formatPriceDecimalFixed(currentPrice, priceDecimalPlaces)}${vwapText}${changePercentText}`
+    message: `${displayName} 当日最高价高于开盘价后转为下跌，从最高点 ${formatPriceDecimalFixed(currentBar.high, priceDecimalPlaces)} 回落 ${pullbackPercent.toFixed(2)}%，开盘 ${formatPriceDecimalFixed(currentBar.open, priceDecimalPlaces)}，${priceLabel} ${formatPriceDecimalFixed(currentPrice, priceDecimalPlaces)}${vwapText}${changePercentText}`,
+    value: pullbackPercent
   });
 }
 
@@ -9658,15 +10171,6 @@ function buildStatusTooltip(snapshot) {
   const lines = [`Market Monitoring ${snapshot.phaseName}`];
   if (snapshot.error) {
     lines.push(snapshot.error);
-  }
-  if (snapshot.alerts.length > 0) {
-    lines.push('', '预警');
-    for (const alert of snapshot.alerts.slice(0, 8)) {
-      lines.push(`${alert.name}: ${alert.label}`);
-    }
-    if (snapshot.alerts.length > 8) {
-      lines.push(`还有 ${snapshot.alerts.length - 8} 条`);
-    }
   }
   return lines.join('\n');
 }

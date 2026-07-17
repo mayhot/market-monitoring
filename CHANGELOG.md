@@ -1,525 +1,545 @@
-# Changelog
+# 更新日志
 
-All notable changes to this extension are documented in this file.
+本扩展所有重要变更均记录于此文件。
 
-## Release Notes Policy
+## 发版说明策略
 
-- Update this file whenever the extension version changes.
-- Add the newest version at the top.
-- Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
+- 扩展版本变更时更新本文件。
+- 新版本添加在最上方。
+- 条目按新增、变更、修复、移除分组（适用时）。
+
+## [0.4.4] - 2026-07-17
+
+### 新增
+
+- 在行情面板标题栏新增小铃铛预警按钮：无预警时显示灰色铃铛，有预警时切换为带红点的铃铛图标，点击打开预警详情弹层。
+- 预警详情弹层支持按标的分组展示，每个分组显示标的名称和未读预警数徽标，默认折叠，点击展开查看详情。
+- 预警消息支持已读/未读状态：新预警默认未读（红色圆点标记、标签加粗、背景高亮），点击消息后标记为已读，状态持久化到 webview state。
+- 预警消息展示触发时间（HH:mm:ss），与标的名称同行排列。
+- 预警记录持久化到 SQLite（`alert_records` 表），每个预警 key 保留最新一条记录。
+- 二次预警去重：同一交易日内，同一预警指标的值偏离超过阈值才再次触发预警，避免预警消息爆炸。新增配置项 `marketMonitoring.alertResubmissionDeviationPercent`（默认 `1`），设为 `0` 可禁用去重。
+- 非交易时段预警缓存：数据库已有今天的预警记录则不再重复预警；无记录时正常评估并存入数据库。
+
+### 变更
+
+- 预警消息展示从 VS Code 状态栏迁移到面板标题栏小铃铛按钮；状态栏不再显示预警计数，仅保留涨跌摘要（受 `showStatusBar` 控制）。
+- "新增分组"按钮从标题栏导航区移到"更多"菜单。
+- 行情面板内的预警徽标（badge）使用原始实时预警数据，不受去重影响；小铃铛红点和通知使用去重后的数据。
+- 偏离计算按指标类型区分：价格类指标使用相对价格变化百分比，百分比类指标使用百分点差值，布尔型指标（MACD 死叉、均线空头排列等）同一天只预警一次。
+- 扩展版本由 `0.4.3` 升级至 `0.4.4`。
 
 ## [0.4.3] - 2026-07-17
 
-### Changed
+### 变更
 
 - 移除市场宽度（涨跌平家数）的东方财富 clist 逐只统计兜底源，数据源回退顺序改为 东方财富 ulist → 同花顺；统计失败时不再保留上次成功值，改为展示 `-`。
 - 涨跌平家数不再使用千位逗号分隔，显示为纯整数（如 `3125` 而非 `3,125`）。
-- Bumped the extension version from `0.4.2` to `0.4.3`.
+- 扩展版本由 `0.4.2` 升级至 `0.4.3`。
 
 ## [0.4.2] - 2026-07-17
 
-### Added
+### 新增
 
 - 在行情面板底部状态栏最左侧新增动态刷新状态圆点：未刷新/非交易时段/超间隔未刷新为灰色，刷新中为绿色呼吸灯，刷新成功至下次刷新前为绿色常亮，刷新失败为红色。颜色采用 VS Code 主题语义色，独立于股票涨跌色配置；webview 端 1s 定时器实时重算，可在自动刷新断链或被暂停时直观变灰。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.4.1` to `0.4.2`.
+- 扩展版本由 `0.4.1` 升级至 `0.4.2`。
 
 ## [0.4.1] - 2026-07-17
 
-### Fixed
+### 修复
 
 - 修复开盘时间行情不自动刷新的根因。webview 的瞬时编辑态（`editingGroups`/`addingGroups`）被持久化到 `vscode.getState()` 与 SQLite，并在下次启动时恢复；若上次会话遗留了 `true` 标志，webview 初始化即上报 `editing:true`，使扩展端 `editingRefreshPaused` 恒为真，`schedule()` 不再设定时器、`refresh(false)` 全部被跳过，自动刷新永久停摆（手动 `refresh(true)` 因 `force` 跳过暂停检查故仍可用）。现在这些瞬时态不再被持久化或恢复，webview 每次启动均以非编辑态开始。
 - 加固自动刷新调度链的健壮性。`schedule()` 的定时回调现会捕获 `refresh(false)` 的 rejection 并重新调度；`refresh` 跳过分支中的告警/宽度评估改用 `try/catch` 包裹，保证 `schedule()` 执行，避免单次异步抛错中断调度链。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.4.0` to `0.4.1`.
+- 扩展版本由 `0.4.0` 升级至 `0.4.1`。
 
 ## [0.4.0] - 2026-07-16
 
-### Removed
+### 移除
 
-- Removed the daily profit bar (the row showing the total "today profit" summed across all groups) above the index dock in the market panel, along with the `marketMonitoring.showGroupDailyProfitBar` config option. The per-group `dailyProfit` / `dailyProfitPercent` summary metrics are still available via `groupSummaryMetrics`.
-- Removed the refresh phase info bar (the row showing "Not started" / "Refreshing · Trading · <time>" etc.) above the index dock in the market panel. The refresh animation on the view title button and the refresh error status in the footer left cell are unchanged.
+- 移除行情面板中指数坞上方展示的日收益条（汇总所有分组"今日收益"的那一行）以及 `marketMonitoring.showGroupDailyProfitBar` 配置项。分组级的 `dailyProfit` / `dailyProfitPercent` 汇总指标仍可通过 `groupSummaryMetrics` 使用。
+- 移除行情面板中指数坞上方的刷新阶段信息条（展示"未开始"/"刷新中 · 交易时段 · <时间>"等内容的那一行）。视图标题刷新按钮的动画与底部左侧单元格中的刷新错误状态保持不变。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.14` to `0.4.0`.
+- 扩展版本由 `0.3.14` 升级至 `0.4.0`。
 
 ## [0.3.14] - 2026-07-16
 
-### Added
+### 新增
 
-- The view title refresh button now shows a spinning animation while a refresh is in progress. A `marketMonitoring.refreshing` command with a `$(refresh~spin)` icon is toggled via a `marketMonitoring.isRefreshing` context key during refresh start/end.
-- New `marketMonitoring.indexSymbol` setting (enum: 中证全指/上证指数/深证成指/创业板指/科创50/北证50, default 上证指数) that selects which index is shown in the footer index dock. The previously user-selectable index dropdown was removed in favor of this configuration.
-- Moved full-market rising, falling, and flat stock counts from the footer left status cell into the footer index quote tooltip; the footer left cell now only shows refresh errors.
-- Added an Eastmoney `clist` fallback source for full-market breadth counts.
+- 视图标题刷新按钮现会在刷新进行中显示旋转动画。通过 `marketMonitoring.isRefreshing` 上下文键在刷新开始/结束时切换一个 `marketMonitoring.refreshing` 命令与 `$(refresh~spin)` 图标。
+- 新增 `marketMonitoring.indexSymbol` 配置项（枚举：中证全指/上证指数/深证成指/创业板指/科创50/北证50，默认 上证指数），用于选择底部指数坞显示的指数。原用户可选择的指数下拉框已移除，改为通过配置项指定。
+- 将全市场上涨、下跌、平盘家数从底部左侧状态单元格移入指数行情悬停提示中；底部左侧单元格现在只显示刷新错误。
+- 新增东方财富 clist 作为全市场涨跌平家数的兜底数据源。
 
-### Fixed
+### 修复
 
-- Clicking the refresh button in the view title bar now always performs a refresh, regardless of pause state (view hidden/collapsed, editing, or configuration in progress). Previously a `force` refresh could be skipped when `isRefreshPaused()` was true; now only `notRunning` and `alreadyRefreshing` remain as skip conditions. The same fix applies to the market breadth refresh path.
-- Fixed the AI assistant button remaining visible despite having the `hidden` attribute. The `.icon-button` CSS `display: inline-flex` was overriding the browser's default `[hidden] { display: none }` behavior; added a global `[hidden] { display: none !important }` rule.
+- 现在点击视图标题栏的刷新按钮一定会执行刷新，不再受暂停状态影响（视图隐藏/折叠、编辑中、配置变更中）。此前 `force` 刷新在 `isRefreshPaused()` 为真时可能被跳过；现在仅保留 `notRunning` 和 `alreadyRefreshing` 两个跳过条件。市场宽度刷新路径同步应用该修复。
+- 修复 AI 助手按钮即便带有 `hidden` 属性仍可见的问题。`.icon-button` 的 CSS `display: inline-flex` 覆盖了浏览器默认的 `[hidden] { display: none }` 行为；新增全局规则 `[hidden] { display: none !important }`。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.13` to `0.3.14`.
+- 扩展版本由 `0.3.13` 升级至 `0.3.14`。
 
 ## [0.3.13] - 2026-07-15
 
-### Fixed
+### 修复
 
-- Fixed the market panel failing to render (groups not shown, start button unresponsive) after installing 0.3.12. The `renderDailyProfitBar` webview function used `'\n'` inside the `getHtml` template literal, which was interpreted as a real newline and broke the embedded webview JavaScript. Changed to `'\\n'` to match the existing convention.
+- 修复安装 0.3.12 后行情面板无法渲染（分组不显示、开始按钮无响应）的问题。`renderDailyProfitBar` webview 函数在 `getHtml` 模板字符串中使用了 `'\n'`，被解析为真实换行符并破坏了内嵌的 webview JavaScript。改为 `'\\n'` 以匹配既有约定。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.12` to `0.3.13`.
+- 扩展版本由 `0.3.12` 升级至 `0.3.13`。
 
 ## [0.3.12] - 2026-07-15
 
-### Changed
+### 变更
 
-- Reworked the group daily profit display from a VS Code status bar item into a dedicated bar above the index dock in the market panel; renamed the config from `marketMonitoring.showGroupDailyProfitStatusBar` to `marketMonitoring.showGroupDailyProfitBar`.
-- Bumped the extension version from `0.3.11` to `0.3.12`.
+- 将分组日收益展示从 VS Code 状态栏项改为行情面板指数坞上方的专用横条；配置项由 `marketMonitoring.showGroupDailyProfitStatusBar` 重命名为 `marketMonitoring.showGroupDailyProfitBar`。
+- 扩展版本由 `0.3.11` 升级至 `0.3.12`。
 
 ## [0.3.11] - 2026-07-15
 
-### Added
+### 新增
 
-- New optional VS Code status bar item showing the total daily profit (sum of change × holding across all groups) of all groups, controlled by `marketMonitoring.showGroupDailyProfitStatusBar` (default off); hover to view the per-group breakdown.
+- 新增可选的 VS Code 状态栏项，展示所有分组的当日总收益（各组 涨跌 × 持仓 的求和），由 `marketMonitoring.showGroupDailyProfitStatusBar`（默认关闭）控制；悬停可查看各分组明细。
 
-### Removed
+### 移除
 
-- Disabled the AI assistant entry: removed the `marketMonitoring.openAiAssistant` command, its activation event, the view title and command palette menu entries, and hid the webview AI button so the entry is no longer visible regardless of the `ai.enabled` setting. The `ai.*` configuration options are retained for backward compatibility.
+- 禁用 AI 助手入口：移除 `marketMonitoring.openAiAssistant` 命令、其激活事件、视图标题与命令面板菜单项，并隐藏 webview 中的 AI 按钮，使该入口无论 `ai.enabled` 设置如何都不再可见。`ai.*` 配置项为向后兼容而保留。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.10` to `0.3.11`.
+- 扩展版本由 `0.3.10` 升级至 `0.3.11`。
 
 ## [0.3.10] - 2026-07-14
 
-### Fixed
+### 修复
 
-- `defaultMonitoringIndicators` configuration schema now includes `expmaDeviation` in its default value and enum list so the VS Code settings UI correctly shows all four default indicators.
+- `defaultMonitoringIndicators` 配置项 schema 现在将 `expmaDeviation` 纳入默认值与枚举列表，使 VS Code 设置界面能正确显示全部四个默认指标。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.9` to `0.3.10`.
+- 扩展版本由 `0.3.9` 升级至 `0.3.10`。
 
 ## [0.3.9] - 2026-07-14
 
-### Added
+### 新增
 
-- `expmaDeviation` is now enabled by default in `defaultMonitoringIndicators`; all held positions automatically receive EXPMA deviation alerts (E13, 4% threshold by default).
+- `defaultMonitoringIndicators` 现在默认启用 `expmaDeviation`；所有持仓标的自动获得 EXPMA 偏离预警（E13、默认 4% 阈值）。
 
-### Fixed
+### 修复
 
-- `movingAverageS` (S alert) badge tooltip now shows the actual price-to-MA deviation percentage instead of the configured threshold value.
+- `movingAverageS`（S 预警）标记悬停提示现在显示实际价格相对均线的偏离百分比，而非配置的阈值。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.8` to `0.3.9`.
+- 扩展版本由 `0.3.8` 升级至 `0.3.9`。
 
 ## [0.3.8] - 2026-07-14
 
-### Changed
+### 变更
 
-- EXPMA deviation E13 badge color now dynamically intensifies with deviation magnitude: deeper and brighter as the deviation ratio (actual deviation / configured threshold) increases, capped at 2x the threshold for maximum saturation.
-- Bumped the extension version from `0.3.7` to `0.3.8`.
+- EXPMA 偏离 E13 标记颜色现会随偏离幅度动态增强：偏离比（实际偏离 / 配置阈值）越大越深越亮，在阈值 2 倍处达到饱和上限。
+- 扩展版本由 `0.3.7` 升级至 `0.3.8`。
 
 ## [0.3.7] - 2026-07-08
 
-### Fixed
+### 修复
 
-- Paused all quote and market breadth refreshes while the VS Code Market Monitoring view is hidden or collapsed, then resumed refresh scheduling when the view becomes visible again.
+- 当 VS Code 市场监控视图被隐藏或折叠时暂停全部行情与市场宽度刷新，并在视图重新可见后恢复刷新调度。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.6` to `0.3.7`.
+- 扩展版本由 `0.3.6` 升级至 `0.3.7`。
 
 ## [0.3.6] - 2026-07-06
 
-### Changed
+### 变更
 
-- Changed the default EXPMA deviation window and quote-row badge from `E12` to `E13`.
-- Bumped the extension version from `0.3.5` to `0.3.6`.
+- 将默认 EXPMA 偏离窗口与行情行标记由 `E12` 改为 `E13`。
+- 扩展版本由 `0.3.5` 升级至 `0.3.6`。
 
 ## [0.3.5] - 2026-07-06
 
-### Added
+### 新增
 
-- Added configurable default monitoring indicators for held symbols through `marketMonitoring.defaultMonitoringIndicators`.
-- Added a group delete action in edit mode, with confirmation before removing the group and all symbols inside it.
+- 新增通过 `marketMonitoring.defaultMonitoringIndicators` 为持仓标的配置默认监控指标。
+- 编辑模式新增分组删除操作，删除分组及其全部标的前会进行确认。
 
-### Changed
+### 变更
 
-- Changed automatic default monitoring indicators and the SQLite monitored-symbol pool to include only symbols with `holding > 0`, while keeping explicit `marketMonitoring.alerts` rules active.
-- Bumped the extension version from `0.3.4` to `0.3.5`.
+- 将自动默认监控指标与 SQLite 监控标的池改为仅包含 `holding > 0` 的标的，同时保留显式 `marketMonitoring.alerts` 规则。
+- 扩展版本由 `0.3.4` 升级至 `0.3.5`。
 
 ## [0.3.4] - 2026-07-03
 
-### Added
+### 新增
 
-- Added configurable EXPMA deviation alerts with `E12` quote-row badges and up/down direction arrows.
+- 新增可配置的 EXPMA 偏离预警，行情行显示 `E12` 标记及上下方向箭头。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.3` to `0.3.4`.
+- 扩展版本由 `0.3.3` 升级至 `0.3.4`。
 
 ## [0.3.3] - 2026-07-01
 
-### Fixed
+### 修复
 
-- Fixed the quote view failing to render after adding group summary drawdown tooltips.
+- 修复新增分组汇总回撤标记悬停提示后行情视图无法渲染的问题。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.2` to `0.3.3`.
+- 扩展版本由 `0.3.2` 升级至 `0.3.3`。
 
 ## [0.3.2] - 2026-07-01
 
-### Added
+### 新增
 
-- Added tiered price decimal-place settings with a configurable price threshold.
-- Added an optional group summary drawdown marker for total assets falling from the current high by a configurable threshold.
+- 新增分档价格小数位设置，可配置分档金额阈值。
+- 新增可选的分组汇总回撤标记，用于总资产从当前最高点下跌超过可配置阈值时提示。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.3.1` to `0.3.2`.
+- 扩展版本由 `0.3.1` 升级至 `0.3.2`。
 
 ## [0.3.1] - 2026-06-29
 
-### Added
+### 新增
 
-- Added United States and Korea symbol support through Yahoo Finance search, quote, and daily K-line data.
-- Added diagnostics logs for symbol search, symbol addition, refresh decisions, quote provider details, and malformed SQLite cache recovery.
+- 通过 Yahoo Finance 搜索、行情与日 K 线数据新增美国与韩国标的支持。
+- 新增标的搜索、标的添加、刷新决策、行情数据源详情以及 SQLite 缓存损坏恢复的诊断日志。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.20` to `0.3.1`.
-- Route quote and direct-code search requests by market so China symbols use China data providers and US/Korea symbols use Yahoo Finance only.
+- 扩展版本由 `0.2.20` 升级至 `0.3.1`。
+- 按市场路由行情与直接代码搜索请求：中国标的使用中国数据源，美国/韩国标的仅使用 Yahoo Finance。
 
-### Fixed
+### 修复
 
-- Fixed overseas symbols such as `000660.KS` being treated as empty rows when cached quotes were missing or unusable.
-- Clarified the group summary row label so it is not mistaken for an empty symbol row.
-- Allowed direct symbol-code entry such as `000660.KS` from the add-symbol box without selecting a search result first.
-- Recreate malformed SQLite cache files automatically after backing them up.
+- 修复海外标的（如 `000660.KS`）在缓存行情缺失或不可用时被当作空行处理的问题。
+- 明确分组汇总行标签，避免被误认为空标的行。
+- 允许从添加标的框直接输入代码（如 `000660.KS`），无需先选择搜索结果。
+- 自动重建损坏的 SQLite 缓存文件（重建前会先备份）。
 
 ## [0.2.20] - 2026-06-29
 
-### Added
+### 新增
 
-- Added configurable `movingAverageS` alerts for prices falling below an N-day moving average by a configured downside offset.
+- 新增可配置的 `movingAverageS` 预警，用于价格跌破 N 日均线超过配置的下行偏移时触发。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.19` to `0.2.20`.
+- 扩展版本由 `0.2.19` 升级至 `0.2.20`。
 
 ## [0.2.19] - 2026-06-26
 
-### Added
+### 新增
 
-- Added a small solid marker before held symbol names in the quote view, while leaving watch-only symbols unmarked.
+- 行情视图中持仓标的名称前新增小实心标记，仅观察标的不显示标记。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.18` to `0.2.19`.
+- 扩展版本由 `0.2.18` 升级至 `0.2.19`。
 
 ## [0.2.18] - 2026-06-24
 
-### Added
+### 新增
 
-- Added a configurable full-market breadth refresh interval, defaulting to 5 minutes.
+- 新增可配置的全市场宽度刷新间隔，默认 5 分钟。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.17` to `0.2.18`.
-- Reused the index footer's left status area for full-market breadth counts, with refresh messages taking priority.
+- 扩展版本由 `0.2.17` 升级至 `0.2.18`。
+- 复用指数底部左侧状态区域展示全市场涨跌平家数，刷新消息优先显示。
 
 ## [0.2.17] - 2026-06-22
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.16` to `0.2.17`.
+- 扩展版本由 `0.2.16` 升级至 `0.2.17`。
 
-### Fixed
+### 修复
 
-- Aligned the full-market breadth label and rising/falling counts with the configured quote color palette.
+- 将全市场宽度标签与涨跌家数颜色对齐至配置的涨跌色模式。
 
 ## [0.2.16] - 2026-06-22
 
-### Changed
+### 变更
 
-- Removed the inline quote-view sort hint from the webview and documented the configured-order behavior in README instead.
-- Bumped the extension version from `0.2.15` to `0.2.16`.
+- 移除行情视图内联排序提示，改为在 README 中说明配置顺序行为。
+- 扩展版本由 `0.2.15` 升级至 `0.2.16`。
 
 ## [0.2.15] - 2026-06-22
 
-### Added
+### 新增
 
-- Added configurable full-market breadth counts in the quote view footer, showing rising, falling, and flat stock counts above the index selector.
-- Added direct aggregate market breadth providers with retries, using Eastmoney first and Tonghuashun as a fallback.
+- 行情视图底部新增可配置的全市场涨跌平家数，展示在指数选择器上方。
+- 新增直接聚合的市场宽度数据源（带重试），优先使用东方财富，同花顺作为兜底。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.14` to `0.2.15`.
+- 扩展版本由 `0.2.14` 升级至 `0.2.15`。
 
-### Fixed
+### 修复
 
-- Escaped market breadth tooltip newlines so the webview script remains valid.
+- 转义市场宽度悬停提示中的换行符，使 webview 脚本保持有效。
 
 ## [0.2.14] - 2026-06-22
 
-### Added
+### 新增
 
-- Added the `marketValue` table column, calculated from latest price multiplied by holding quantity.
+- 新增 `marketValue` 表格列，由最新价乘以持仓数量计算。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.13` to `0.2.14`.
-- Changed the default quote sorting to order symbols with calculable holdings by market value while keeping other symbols in configured order.
+- 扩展版本由 `0.2.13` 升级至 `0.2.14`。
+- 默认排序改为按市值排序有持仓的标的，其余标的保持配置顺序。
 
 ## [0.2.13] - 2026-06-17
 
-### Added
+### 新增
 
-- Added `movingAverageHoldBelow` alerts for close-confirmed "失守 N 日线" checks.
-- Added explicit `movingAverageAbove` alerts for intraday "站上 N 日线" cross-up checks and `movingAverageHoldAbove` alerts for close-confirmed "站稳 N 日线" checks, both with separate red moving-average badges.
+- 新增 `movingAverageHoldBelow` 预警，用于收盘确认的"失守 N 日线"检查。
+- 新增显式 `movingAverageAbove` 预警，用于盘中"站上 N 日线"上穿检查；以及 `movingAverageHoldAbove` 预警，用于收盘确认的"站稳 N 日线"检查，二者均使用单独的红色均线标记。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.12` to `0.2.13`.
-- Changed `movingAverageBelow` to use intraday "跌破 N 日线" cross-down checks.
+- 扩展版本由 `0.2.12` 升级至 `0.2.13`。
+- 将 `movingAverageBelow` 改为使用盘中"跌破 N 日线"下穿检查。
 
 ## [0.2.12] - 2026-06-15
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.11` to `0.2.12`.
-- Allow the same symbol to be added to multiple groups while still preventing duplicates inside the same group.
-- Updated the SQLite monitored symbol cache to key configured symbols by code and group.
+- 扩展版本由 `0.2.11` 升级至 `0.2.12`。
+- 允许同一标的添加到多个分组，但同一分组内仍会跳过重复标的。
+- 更新 SQLite 监控标的缓存，按代码与分组为已配置标的建立键。
 
 ## [0.2.11] - 2026-06-12
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.10` to `0.2.11`.
+- 扩展版本由 `0.2.10` 升级至 `0.2.11`。
 
-### Fixed
+### 修复
 
-- Restored quote row change columns to display the symbol's intraday change and change percentage relative to previous close.
-- Kept expanded groups from showing stale zero change values after they were collapsed while group-level quote snapshots continued refreshing.
+- 恢复行情行涨跌列，显示标的相对上一日收盘价的盘中涨跌额与涨跌幅。
+- 防止展开的分组在折叠期间分组级行情快照仍持续刷新时，展示过期的零涨跌值。
 
 ## [0.2.10] - 2026-06-11
 
-### Added
+### 新增
 
-- Added SQLite persistence for market view state, including the selected index, collapsed groups, per-group table sorting, column widths, and AI panel draft state.
+- 新增 SQLite 持久化市场视图状态，包括已选指数、折叠的分组、各分组的表格排序、列宽与 AI 面板草稿态。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.9` to `0.2.10`.
+- 扩展版本由 `0.2.9` 升级至 `0.2.10`。
 
-### Fixed
+### 修复
 
-- Fell back to the latest SQLite quote snapshot when live quote refresh fails so cached market data remains available offline.
+- 当实时行情刷新失败时回退到最新的 SQLite 行情快照，使缓存行情数据在离线时仍可用。
 
 ## [0.2.9] - 2026-06-11
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.8` to `0.2.9`.
-- Changed quote rows to display minute-level change values while keeping group title rise/fall counts on the intraday previous-close basis.
+- 扩展版本由 `0.2.8` 升级至 `0.2.9`。
+- 将行情行改为展示分钟级涨跌值，分组标题的涨跌家数仍基于盘中上一日收盘基准。
 
-### Fixed
+### 修复
 
-- Prevented one-off minute price jumps from immediately flipping quote row rise/fall direction by requiring same-direction minute slope confirmation.
+- 要求同向分钟斜率确认，避免单次分钟价格跳变立即翻转行情行涨跌方向。
 
 ## [0.2.8] - 2026-06-11
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.7` to `0.2.8`.
-- Changed moving-average alert badge colors to an independent severity scale for 5, 10, 20, and 60 day alerts.
+- 扩展版本由 `0.2.7` 升级至 `0.2.8`。
+- 将均线预警标记颜色改为 5、10、20、60 日预警的独立严重度色阶。
 
 ## [0.2.7] - 2026-06-11
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.6` to `0.2.7`.
+- 扩展版本由 `0.2.6` 升级至 `0.2.7`。
 
-### Fixed
+### 修复
 
-- Allowed alert badges and rising/falling direction badges to display together in quote rows.
+- 允许预警标记与涨跌方向标记在行情行中同时显示。
 
 ## [0.2.6] - 2026-06-09
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.5` to `0.2.6`.
+- 扩展版本由 `0.2.5` 升级至 `0.2.6`。
 
-### Fixed
+### 修复
 
-- Kept collapsed group quote rows from refreshing while still updating the group rise/fall counts.
-- Paused all quote refreshes while editing groups, editing group symbols, or changing quote-column configuration, then resumed with a deferred refresh after editing ends.
+- 折叠的分组行情行不再刷新，但仍更新分组涨跌家数。
+- 在编辑分组、编辑分组标的或更改行情列配置时暂停所有行情刷新，编辑结束后再延迟恢复刷新。
 
 ## [0.2.5] - 2026-06-05
 
-### Added
+### 新增
 
-- Added default intraday high-pullback alerts for configured symbols.
-- Added intraday downtrend confirmation using realtime VWAP, recent refresh-price slope, and consecutive confirmation ticks.
-- Added alert evaluation logs with rule-type summaries for easier diagnostics.
+- 为已配置标的新增默认的盘中冲高回落预警。
+- 新增基于实时 VWAP、最近刷新价格斜率与连续确认 tick 的盘中下跌趋势确认。
+- 新增带规则类型汇总的预警评估日志，便于诊断。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.4` to `0.2.5`.
-- Kept intraday high-pullback alerts visible after close by evaluating cached closing snapshots without requiring live tick confirmation.
-- Used realtime quote open/high/VWAP fields for intraday pullback checks instead of requiring daily K-line history.
-- Changed the intraday high-pullback badge to a lighter downward arrow.
-- Limited and summarized K-line alert data request failures to reduce noisy logs.
+- 扩展版本由 `0.2.4` 升级至 `0.2.5`。
+- 盘中冲高回落预警在收盘后仍会基于缓存的收盘快照评估显示，无需实时 tick 确认。
+- 盘中冲高回落检查改用实时行情的 open/high/VWAP 字段，无需日 K 线历史。
+- 将盘中冲高回落标记改为更轻量的向下箭头。
+- 限制并汇总 K 线预警数据请求失败信息，减少日志噪声。
 
-### Fixed
+### 修复
 
-- Evaluated alert rules against cached snapshots when refreshes are skipped outside trading hours.
-- Prevented overlapping alert evaluations for the same cached quote snapshot.
-- Forced a realtime quote refresh when cached quotes are missing fields required by intraday alert rules.
+- 非交易时段跳过刷新时，对缓存快照评估预警规则。
+- 防止同一缓存行情快照的预警评估重叠执行。
+- 当缓存行情缺失盘中预警规则所需字段时，强制刷新实时行情。
 
 ## [0.2.4] - 2026-06-05
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.3` to `0.2.4`.
-- Changed in-panel alert badges from an exclamation marker to a compact alarm-style icon.
-- Tightened quote rows and group summary spacing for a denser group list.
+- 扩展版本由 `0.2.3` 升级至 `0.2.4`。
+- 将面板内预警标记由感叹号改为紧凑的闹钟样式图标。
+- 收紧行情行与分组汇总间距，使分组列表更紧凑。
 
 ## [0.2.3] - 2026-06-04
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.2` to `0.2.3`.
-- Moved group rise/fall counts next to the group name and tightened group header action buttons.
-- Aligned group rise/fall count colors and quote change colors with the configured Color Mode.
-- Shortened row highlight bars to 61.8% of the quote row height.
+- 扩展版本由 `0.2.2` 升级至 `0.2.3`。
+- 将分组涨跌家数移至分组名称旁，并收紧分组标题操作按钮。
+- 将分组涨跌家数颜色与行情涨跌颜色对齐至配置的涨跌色模式。
+- 行高亮色带缩短至行情行高度的 61.8%。
 
 ## [0.2.2] - 2026-06-03
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.1` to `0.2.2`.
-- Disabled VS Code alert popup notifications by default while keeping in-panel alert markers and status bar counts active.
+- 扩展版本由 `0.2.1` 升级至 `0.2.2`。
+- 默认关闭 VS Code 预警弹窗通知，但保留面板内预警标记与状态栏计数。
 
-### Fixed
+### 修复
 
-- Limited enabled VS Code alert popup notifications to one notification per symbol per Shanghai trading day.
+- 将启用的 VS Code 预警弹窗通知限制为每个标的每个上海交易日最多一次。
 
 ## [0.2.1] - 2026-06-02
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.2.0` to `0.2.1`.
+- 扩展版本由 `0.2.0` 升级至 `0.2.1`。
 
-### Fixed
+### 修复
 
-- Kept the bottom index dock anchored below the scrollable group list when a group contains many symbols.
+- 当某分组包含大量标的时，保持底部指数坞锚定在可滚动的分组列表下方。
 
 ## [0.2.0] - 2026-06-02
 
-### Added
+### 新增
 
-- Added default MA20 downside alerts for all configured symbols when quote alerts are enabled.
-- Added configurable moving-average downside alerts with custom `movingAverageDays`.
-- Added trend-risk alert indicators for bearish moving-average alignment, MACD death crosses, volume-backed drops, low-volume rebounds, recent-low breakdowns, RSI weakness, and Bollinger band breakdowns.
-- Added daily K-line fetching and in-session caching for technical alert evaluation.
+- 开启行情预警后，为所有已配置标的新增默认的 MA20 下穿预警。
+- 新增可配置的均线下穿预警，支持自定义 `movingAverageDays`。
+- 新增趋势风险预警指标，包括均线空头排列、MACD 死叉、放量下跌、缩量反弹、近期低点破位、RSI 走弱、布林带破位。
+- 新增日 K 线抓取与会话内缓存，用于技术预警评估。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.1.9` to `0.2.0`.
-- Extended alert settings schema and README examples for the new technical indicators.
+- 扩展版本由 `0.1.9` 升级至 `0.2.0`。
+- 扩展预警设置 schema 与 README 示例，覆盖新增的技术指标。
 
 ## [0.1.9] - 2026-06-02
 
-### Added
+### 新增
 
-- Added an optional AI assistant entry for natural-language group and symbol management.
-- Added AI provider settings for OpenAI-compatible, Azure OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Ollama, LM Studio, and custom endpoints.
-- Added `Market Monitoring: Configure Quote Columns` for ordering, showing, and hiding quote table columns through VS Code commands.
+- 新增可选的 AI 助手入口，用于自然语言管理分组与标的。
+- 新增 AI 提供方设置，支持 OpenAI 兼容、Azure OpenAI、Anthropic、Gemini、DeepSeek、OpenRouter、Ollama、LM Studio 与自定义端点。
+- 新增 `Market Monitoring: Configure Quote Columns` 命令，通过 VS Code 命令对行情表格列进行排序、显示与隐藏。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.1.8` to `0.1.9`.
-- Moved quote column and language configuration guidance toward VS Code Settings and command-based configuration.
+- 扩展版本由 `0.1.8` 升级至 `0.1.9`。
+- 将行情列与语言配置指引迁移至 VS Code 设置与命令式配置。
 
 ## [0.1.8] - 2026-05-29
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.1.7` to `0.1.8`.
-- Kept group edit and add actions available in the sticky group header for long symbol lists.
-- Moved group rename and symbol search panels below the group header so they remain accessible while scrolling.
+- 扩展版本由 `0.1.7` 升级至 `0.1.8`。
+- 在标的列表较长的粘性分组标题中保留分组编辑与添加操作。
+- 将分组重命名与标的搜索面板移至分组标题下方，使其在滚动时仍可访问。
 
 ## [0.1.7] - 2026-05-28
 
-### Added
+### 新增
 
-- Added the `position` table column, calculated from each symbol's market value within its group.
-- Included `position` in table column configuration, sorting, and CSV export.
+- 新增 `position` 表格列，由每个标的在其分组内的市值计算。
+- 将 `position` 纳入表格列配置、排序与 CSV 导出。
 
-### Changed
+### 变更
 
-- Bumped the extension version from `0.1.6` to `0.1.7`.
-- Recalculate position, net profit, and group summaries immediately after editable holdings change.
-- Trim trailing zeros from signed decimal displays so change values follow the same formatting as other decimal columns.
+- 扩展版本由 `0.1.6` 升级至 `0.1.7`。
+- 编辑持仓变更后立即重新计算仓位、净收益与分组汇总。
+- 裁剪带符号小数显示的末尾零，使涨跌值与其他小数列格式一致。
 
 ## [0.1.6] - 2026-05-28
 
-### Fixed
+### 修复
 
-- Improved quote refresh diagnostics and provider timing logs.
-- Preserved the last valid quote snapshot when refreshes fail or timeout.
-- Moved refresh errors into the bottom status bar and kept index information visible.
-- Improved amount readability with thousands separators.
+- 改进行情刷新诊断与数据源耗时日志。
+- 刷新失败或超时时保留上次有效的行情快照。
+- 将刷新错误移至底部状态栏，保持指数信息可见。
+- 改进成交额可读性，加入千位分隔符。
 
 ## [0.1.5] - 2026-05-28
 
-### Added
+### 新增
 
-- Added a setting to control whether large amounts are compacted with the `W` unit.
+- 新增设置，控制大额成交额是否以 `W` 为单位紧凑显示。
 
-### Changed
+### 变更
 
-- Changed group refresh feedback to flash the group name after a successful refresh instead of flashing individual symbol rows.
+- 将分组刷新反馈改为成功刷新后闪动分组名称，而非闪动单个标的行。
 
 ## [0.1.4] - 2026-05-28
 
-### Fixed
+### 修复
 
-- Right-aligned a single visible group summary metric.
+- 当仅有一个可见的分组汇总指标时右对齐显示。
 
 ## [0.1.3] - 2026-05-28
 
-### Added
+### 新增
 
-- Added configurable visibility for group summary metrics.
+- 新增分组汇总指标的可配置可见性。
 
 ## [0.1.2] - 2026-05-28
 
-### Added
+### 新增
 
-- Added Chinese and English UI language switching.
+- 新增中英文界面语言切换。
 
 ## [0.1.1] - 2026-05-27
 
-### Added
+### 新增
 
-- Added alias column support backed by pinyin conversion.
-- Added CSV import and export improvements.
-- Included the pinyin runtime dependency in packaged VSIX output.
+- 新增别名列支持，基于拼音转换。
+- 改进 CSV 导入与导出。
+- 将拼音运行时依赖纳入打包的 VSIX 输出。
 
 ## [0.1.0] - 2026-05-27
 
-### Added
+### 新增
 
-- Initial market monitoring extension release.
+- 市场行情监控扩展首次发布。

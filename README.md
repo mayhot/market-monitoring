@@ -2,6 +2,11 @@
 
 一个用于 VS Code 的市场行情监控扩展，支持自定义标的、分组、排序、预警和状态栏摘要。
 
+## 交流与反馈
+
+- QQ 群：`1065570056`
+- 点击链接加入群聊【Market Monitoring 交流群】：https://qm.qq.com/q/JqzQhIrNio
+
 ## 功能
 
 - 自定义分组，默认包含“自选”，用户在具体分组底部搜索并添加标的。
@@ -188,17 +193,17 @@
 }
 ```
 
-When `marketMonitoring.enableAlerts` is enabled, symbols with `holding > 0` get the default monitoring indicators configured by `marketMonitoring.defaultMonitoringIndicators`. The default value is `["movingAverageBelow", "movingAverageS", "intradayHighPullback", "expmaDeviation"]`; use an empty array to disable automatic default indicators. Symbols without a valid holding do not show these default monitoring indicators and are not added to the SQLite monitored-symbol pool by default. Explicit rules in `marketMonitoring.alerts` still run even when the symbol has no holding.
+当开启 `marketMonitoring.enableAlerts` 时，`holding > 0` 的标的应用由 `marketMonitoring.defaultMonitoringIndicators` 配置的默认监控指标。默认值为 `["movingAverageBelow", "movingAverageS", "intradayHighPullback", "expmaDeviation"]`；使用空数组可禁用自动默认指标。没有有效持仓的标的不会展示这些默认监控指标，默认也不会被加入 SQLite 监控标的池。`marketMonitoring.alerts` 中的显式规则即使标的没有持仓也仍然会执行。
 
-`movingAverageBelow` adds default `movingAverageBelow: true` alerts with `movingAverageDays: [5, 10, 20, 60, 120]`, and `movingAverageS` adds default `movingAverageS: true` alerts with `movingAverageSDays: 20` and `movingAverageSOffsetPercent: 4`. `movingAverageBelow` now means an intraday "跌破 N 日线" cross-down alert: the previous close was greater than or equal to the previous N-day moving average and the latest price is less than the current N-day moving average. Add an explicit alert rule with `movingAverageBelow: false` or `movingAverageS: false` to disable those moving-average alerts for a symbol.
+`movingAverageBelow` 会添加默认的 `movingAverageBelow: true` 预警，窗口为 `movingAverageDays: [5, 10, 20, 60, 120]`；`movingAverageS` 会添加默认的 `movingAverageS: true` 预警，窗口为 `movingAverageSDays: 20`、阈值为 `movingAverageSOffsetPercent: 4`。`movingAverageBelow` 现在表示盘中"跌破 N 日线"下穿预警：上一日收盘价大于等于上一日 N 日均线，且最新价小于当前 N 日均线。可对该标的添加显式规则 `movingAverageBelow: false` 或 `movingAverageS: false` 来关闭对应的均线预警。
 
-`movingAverageS` triggers an "S预警" when the latest price is less than or equal to `MA(N) * (1 - X / 100)`. Use `movingAverageSDays` to configure N, and `movingAverageSOffsetPercent` to configure X.
+`movingAverageS` 在最新价小于等于 `MA(N) * (1 - X / 100)` 时触发"S预警"。用 `movingAverageSDays` 配置 N，用 `movingAverageSOffsetPercent` 配置 X。
 
-`expmaDeviation` triggers an EXPMA deviation alert when the latest price is at least `expmaDeviationAbovePercent` above `EXPMA(expmaDays)` or at least `expmaDeviationBelowPercent` below it. The default EXPMA window is `13`, both default thresholds are `4`, and the quote row badge shows `E13` plus an up or down arrow.
+`expmaDeviation` 在最新价高于 `EXPMA(expmaDays)` 至少 `expmaDeviationAbovePercent`，或低于它至少 `expmaDeviationBelowPercent` 时触发 EXPMA 偏离预警。默认 EXPMA 窗口为 `13`，两个默认阈值均为 `4`，行情行标记显示 `E13` 以及上/下方向箭头。
 
-Set `movingAverageHoldBelow: true` for close-confirmed "失守 N 日线" alerts using the same cross-down condition after market close. This downside confirmation alert is disabled by default; use `movingAverageHoldBelowDays` to choose its windows.
+设置 `movingAverageHoldBelow: true` 可开启收盘确认的"失守 N 日线"预警，在收盘后按相同的下穿条件判断。该下跌确认预警默认关闭，可用 `movingAverageHoldBelowDays` 选择其窗口。
 
-Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when the previous close was below the previous N-day moving average and the latest price is greater than or equal to the current N-day moving average. Set `movingAverageHoldAbove: true` for close-confirmed "站稳 N 日线" alerts using the same cross-up condition after market close. These upside moving-average alerts are disabled by default; use `movingAverageAboveDays` or `movingAverageHoldAboveDays` to choose their windows. If downside and upside moving-average alerts are both active for a symbol, the panel shows separate green downside and red upside badges.
+设置 `movingAverageAbove: true` 可在上一日收盘价低于上一日 N 日均线、且最新价大于等于当前 N 日均线时触发盘中"站上 N 日线"预警。设置 `movingAverageHoldAbove: true` 可在收盘后按相同的上穿条件触发收盘确认的"站稳 N 日线"预警。这些均线向上预警默认关闭，可用 `movingAverageAboveDays` 或 `movingAverageHoldAboveDays` 选择其窗口。若某个标的同时开启了均线向下与向上预警，面板会分别显示绿色向下与红色向上标记。
 
 `intradayHighPullback` 会在标的当日最高价高于开盘价、当前涨跌幅转为负值，且从当日最高点回落幅度超过 `intradayHighPullbackPercent` 时触发。盘中会结合实时分时 VWAP（可用时）、最近刷新价格斜率和 `intradayDowntrendConfirmTicks` 连续确认来判断分时下跌趋势；收盘后会按当日日 K 收盘价继续展示预警。
 
@@ -206,9 +211,9 @@ Set `movingAverageAbove: true` to trigger intraday "站上 N 日线" alerts when
 
 - 默认不在 VS Code 右下角弹出通知；如需弹窗，将 `marketMonitoring.enableAlertNotifications` 设为 `true`。
 - 在行情面板中给对应标的加预警标记。
-- 在状态栏显示预警数量。
+- 在面板标题栏的小铃铛按钮上展示预警状态：无预警时为灰色铃铛，有预警时切换为带红点的铃铛；点击可查看预警详情。
 
-开启通知后，同一个标的每天最多弹出一次右下角通知；行情面板预警标记和状态栏预警数量仍会实时更新。
+开启通知后，同一个标的每天最多弹出一次右下角通知；行情面板预警标记和小铃铛预警状态仍会实时更新。
 
 状态栏还提供一个可独立开关的展示项，默认关闭：将 `marketMonitoring.showStatusBar` 设为 `true` 可在状态栏显示前几个标的涨跌的紧凑摘要。
 

@@ -7,5 +7,6 @@
   "command.stop": "暂停",
   "command.configureQuoteColumns": "配置行情列",
   "command.openSettings": "打开设置",
-  "command.addGroup": "新增分组"
+  "command.addGroup": "新增分组",
+  "command.showAlerts": "预警"
 }

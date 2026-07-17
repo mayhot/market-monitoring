@@ -366,6 +366,67 @@ class MarketDatabase {
     }, 'writeAlertNotificationCache');
   }
 
+  async readAlertRecords(keys) {
+    const keyList = Array.from(new Set((keys || []).filter((k) => typeof k === 'string' && k)));
+    if (keyList.length === 0) {
+      return {};
+    }
+    return this.enqueueRead((db) => {
+      const inClause = keyList.map((k) => sqlString(k)).join(',');
+      const rows = selectRows(db, `
+        SELECT alert_key, alert_value, triggered_at, alert_date
+        FROM alert_records
+        WHERE alert_key IN (${inClause})
+      `);
+      const map = {};
+      for (const row of rows) {
+        map[row.alert_key] = {
+          value: row.alert_value === null ? null : Number(row.alert_value),
+          triggeredAt: String(row.triggered_at || ''),
+          date: String(row.alert_date || '')
+        };
+      }
+      return map;
+    }, 'readAlertRecords', {});
+  }
+
+  async upsertAlertRecords(records) {
+    const list = (records || []).filter((r) => r && r.key);
+    if (list.length === 0) {
+      return;
+    }
+    return this.enqueueWrite(async (db) => {
+      const now = new Date().toISOString();
+      const statement = db.prepare(`
+        INSERT INTO alert_records (alert_key, code, alert_value, triggered_at, alert_date)
+        VALUES ($key, $code, $value, $triggeredAt, $date)
+        ON CONFLICT(alert_key) DO UPDATE SET
+          alert_value = excluded.alert_value,
+          triggered_at = excluded.triggered_at,
+          alert_date = excluded.alert_date
+      `);
+
+      db.run('BEGIN TRANSACTION');
+      try {
+        for (const record of list) {
+          statement.run({
+            $key: record.key,
+            $code: record.code || '',
+            $value: record.value !== undefined && record.value !== null ? Number(record.value) : null,
+            $triggeredAt: record.triggeredAt || now,
+            $date: record.date || ''
+          });
+        }
+        db.run('COMMIT');
+      } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
+      } finally {
+        statement.free();
+      }
+    }, 'upsertAlertRecords');
+  }
+
   async readViewState() {
     return this.enqueueRead((db) => {
       const rows = selectRows(db, `
@@ -642,6 +703,14 @@ class MarketDatabase {
         state_key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS alert_records (
+        alert_key TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
+        alert_value REAL,
+        triggered_at TEXT NOT NULL,
+        alert_date TEXT NOT NULL
       );
     `);
     this.migrateDailyKlineSchema(db);
