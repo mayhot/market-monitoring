@@ -8,6 +8,14 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.4.3] - 2026-07-17
+
+### Changed
+
+- 移除市场宽度（涨跌平家数）的东方财富 clist 逐只统计兜底源，数据源回退顺序改为 东方财富 ulist → 同花顺；统计失败时不再保留上次成功值，改为展示 `-`。
+- 涨跌平家数不再使用千位逗号分隔，显示为纯整数（如 `3125` 而非 `3,125`）。
+- Bumped the extension version from `0.4.2` to `0.4.3`.
+
 ## [0.4.2] - 2026-07-17
 
 ### Added

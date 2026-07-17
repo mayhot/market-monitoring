@@ -3730,9 +3730,9 @@ class QuotesViewProvider {
       let indexTitle = selected.name + '：' + price + '，' + percent;
       if (snapshot.showMarketBreadth && snapshot.marketBreadth) {
         const breadth = snapshot.marketBreadth;
-        const up = isMarketBreadthNumber(breadth.up) ? formatInteger(breadth.up) : '-';
-        const down = isMarketBreadthNumber(breadth.down) ? formatInteger(breadth.down) : '-';
-        const flat = isMarketBreadthNumber(breadth.flat) ? formatInteger(breadth.flat) : '-';
+        const up = isMarketBreadthNumber(breadth.up) ? String(Math.trunc(breadth.up)) : '-';
+        const down = isMarketBreadthNumber(breadth.down) ? String(Math.trunc(breadth.down)) : '-';
+        const flat = isMarketBreadthNumber(breadth.flat) ? String(Math.trunc(breadth.flat)) : '-';
         indexTitle += '\\n' + t('marketBreadthLabel') + t('marketBreadthUp') + ' ' + up + ' ' + t('marketBreadthDown') + ' ' + down + ' ' + t('marketBreadthFlat') + ' ' + flat;
       }
       indexQuote.title = indexTitle;
@@ -7856,10 +7856,6 @@ async function fetchMarketBreadth(timeoutMs) {
       fetch: fetchEastmoneyMarketBreadth
     },
     {
-      name: '东方财富(clist)',
-      fetch: fetchEastmoneyClistMarketBreadth
-    },
-    {
       name: '同花顺',
       fetch: fetchTonghuashunMarketBreadth
     }
@@ -7973,56 +7969,6 @@ async function fetchEastmoneyMarketBreadth(timeoutMs) {
   };
 }
 
-async function fetchEastmoneyClistMarketBreadth(timeoutMs) {
-  const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
-  const fields = 'f3';
-  const pageSize = 1000;
-  let up = 0;
-  let down = 0;
-  let flat = 0;
-  for (let page = 1; page <= 10; page += 1) {
-    const url = `https://82.push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f12&fs=${encodeURIComponent(fs)}&fields=${encodeURIComponent(fields)}`;
-    const body = await requestText(url, timeoutMs, {
-      Referer: 'https://quote.eastmoney.com/',
-      'User-Agent': 'Mozilla/5.0 VSCode Market Monitoring'
-    });
-    const parsed = JSON.parse(body);
-    const rows = parsed && parsed.data && Array.isArray(parsed.data.diff) ? parsed.data.diff : [];
-    for (const row of rows) {
-      const changePercent = Number(row.f3);
-      if (!Number.isFinite(changePercent)) {
-        continue;
-      }
-      if (changePercent > 0) {
-        up += 1;
-      } else if (changePercent < 0) {
-        down += 1;
-      } else {
-        flat += 1;
-      }
-    }
-    if (rows.length < pageSize) {
-      break;
-    }
-  }
-  if (up + down + flat === 0) {
-    throw new Error('Market breadth clist response did not include usable data');
-  }
-  return {
-    source: '东方财富',
-    scope: MARKET_BREADTH_SCOPE,
-    up,
-    down,
-    flat,
-    total: up + down + flat,
-    parts: [],
-    updatedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-    updatedDate: getShanghaiDateString(),
-    status: '',
-    error: ''
-  };
-}
-
 async function fetchTonghuashunMarketBreadth(timeoutMs) {
   const body = await requestText('https://q.10jqka.com.cn/api.php?t=indexflash&', timeoutMs, {
     Referer: 'https://q.10jqka.com.cn/',
@@ -8097,11 +8043,8 @@ function sleep(ms) {
 }
 
 function markMarketBreadthError(previous, error) {
-  const fallback = previous && Number.isFinite(previous.total)
-    ? previous
-    : createEmptyMarketBreadth();
   return {
-    ...fallback,
+    ...createEmptyMarketBreadth(),
     status: 'error',
     error
   };
