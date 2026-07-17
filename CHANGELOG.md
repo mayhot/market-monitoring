@@ -8,6 +8,17 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.4.1] - 2026-07-17
+
+### Fixed
+
+- 修复开盘时间行情不自动刷新的根因。webview 的瞬时编辑态（`editingGroups`/`addingGroups`）被持久化到 `vscode.getState()` 与 SQLite，并在下次启动时恢复；若上次会话遗留了 `true` 标志，webview 初始化即上报 `editing:true`，使扩展端 `editingRefreshPaused` 恒为真，`schedule()` 不再设定时器、`refresh(false)` 全部被跳过，自动刷新永久停摆（手动 `refresh(true)` 因 `force` 跳过暂停检查故仍可用）。现在这些瞬时态不再被持久化或恢复，webview 每次启动均以非编辑态开始。
+- 加固自动刷新调度链的健壮性。`schedule()` 的定时回调现会捕获 `refresh(false)` 的 rejection 并重新调度；`refresh` 跳过分支中的告警/宽度评估改用 `try/catch` 包裹，保证 `schedule()` 执行，避免单次异步抛错中断调度链。
+
+### Changed
+
+- Bumped the extension version from `0.4.0` to `0.4.1`.
+
 ## [0.4.0] - 2026-07-16
 
 ### Removed

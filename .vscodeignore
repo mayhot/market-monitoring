@@ -2,6 +2,7 @@
 .git/**
 .gitignore
 AGENTS.md
+.codebuddy/**
 scripts/**
 node_modules/**
 !node_modules/pinyin-pro/

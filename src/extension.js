@@ -103,8 +103,8 @@ function activate(context) {
     output,
     monitor.database,
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
-    vscode.commands.registerCommand('marketMonitoring.refresh', () => monitor.refresh(true)),
-    vscode.commands.registerCommand('marketMonitoring.refreshing', () => monitor.refresh(true)),
+    vscode.commands.registerCommand('marketMonitoring.refresh', () => monitor.requestRefresh(true, 'command')),
+    vscode.commands.registerCommand('marketMonitoring.refreshing', () => monitor.requestRefresh(true, 'command')),
     vscode.commands.registerCommand('marketMonitoring.importCsv', () => monitor.importCsv()),
     vscode.commands.registerCommand('marketMonitoring.exportCsv', () => monitor.exportCsv()),
     vscode.commands.registerCommand('marketMonitoring.start', () => monitor.start(true)),
@@ -334,7 +334,7 @@ class MarketMonitor {
     vscode.commands.executeCommand('setContext', 'marketMonitoring.isRunning', true);
     this.logInfo('Started');
     this.schedule();
-    this.refresh(false);
+    this.requestRefresh(false, 'start');
     if (showMessage) {
       vscode.window.showInformationMessage('Market Monitoring 已启动');
     }
@@ -386,7 +386,7 @@ class MarketMonitor {
       return;
     }
     this.schedule();
-    this.refresh(false);
+    this.requestRefresh(false, reason);
   }
 
   persistConfiguredSymbols(reason) {
@@ -478,7 +478,7 @@ class MarketMonitor {
       expandedGroups
     });
     if (expandedGroups.length > 0) {
-      this.refresh(true);
+      this.requestRefresh(true, 'groupExpanded');
     }
   }
 
@@ -576,7 +576,7 @@ class MarketMonitor {
 
     if (this.pendingRefreshAfterPause) {
       this.pendingRefreshAfterPause = false;
-      this.refresh(true);
+      this.requestRefresh(true, `resume:${reason}`);
       return;
     }
 
@@ -600,6 +600,23 @@ class MarketMonitor {
 
   logError(message, details) {
     this.output.appendLine(formatLogLine('ERROR', message, details));
+    this.output.show(true);
+  }
+
+  async requestRefresh(force, source) {
+    try {
+      await this.refresh(force);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.lastError = message;
+      this.logError('Refresh request failed', {
+        source,
+        force,
+        error: message
+      });
+      this.updateViews(getMarketPhase().name);
+      this.schedule();
+    }
   }
 
   async addSymbol(symbol) {
@@ -642,7 +659,7 @@ class MarketMonitor {
       totalSymbols: nextSymbols.length
     });
     vscode.window.showInformationMessage(`已添加 ${normalized.name}`);
-    this.refresh(true);
+    this.requestRefresh(true, 'symbolAdded');
   }
 
   async searchSymbols(query, requestId) {
@@ -767,7 +784,7 @@ class MarketMonitor {
           symbols: result.symbols
         };
         this.updateViews(getMarketPhase().name);
-        this.refresh(true);
+        this.requestRefresh(true, 'aiChangesApplied');
       }
 
       this.logInfo('AI manage completed', {
@@ -996,7 +1013,7 @@ class MarketMonitor {
         symbols: nextSymbols
       };
       vscode.window.showInformationMessage(`已导入 ${importResult.symbols.length} 个标的，跳过 ${importResult.skipped} 条`);
-      this.refresh(true);
+      this.requestRefresh(true, 'csvImported');
     } catch (error) {
       const message = getErrorMessage(error);
       this.output.appendLine(`[${new Date().toISOString()}] CSV 导入失败: ${message}`);
@@ -1091,11 +1108,15 @@ class MarketMonitor {
         });
         this.lastRefreshSkipKey = skipKey;
       }
-      if (this.shouldEvaluateCurrentAlertSnapshot()) {
-        await this.evaluateCurrentAlerts('cachedSnapshot');
-      }
-      if (this.shouldRefreshMarketBreadth(phase, force)) {
-        await this.refreshMarketBreadth('cachedSnapshot');
+      try {
+        if (this.shouldEvaluateCurrentAlertSnapshot()) {
+          await this.evaluateCurrentAlerts('cachedSnapshot');
+        }
+        if (this.shouldRefreshMarketBreadth(phase, force)) {
+          await this.refreshMarketBreadth('cachedSnapshot');
+        }
+      } catch (error) {
+        this.logError('Refresh skip-path error', { error: getErrorMessage(error) });
       }
       this.updateViews(phase.name);
       this.schedule();
@@ -1342,7 +1363,7 @@ class MarketMonitor {
     }
 
     const interval = Math.max(2, this.config.refreshIntervalSeconds) * 1000;
-    this.timer = setTimeout(() => this.refresh(false), interval);
+    this.timer = setTimeout(() => this.requestRefresh(false, 'scheduler'), interval);
   }
 
   updateViews(phaseName, loading = false) {
@@ -2889,9 +2910,9 @@ class QuotesViewProvider {
     const refreshError = document.getElementById('refresh-error');
     const dynamicColors = document.getElementById('dynamic-colors');
     let locale = 'zh-CN';
-    let editingGroups = viewState.editingGroups || {};
+    let editingGroups = {};
     let collapsedGroups = viewState.collapsedGroups || {};
-    let addingGroups = viewState.addingGroups || {};
+    let addingGroups = {};
     let aiOpen = Boolean(viewState.aiOpen);
     let tableSort = viewState.tableSort || {};
     let columnWidths = viewState.columnWidths || {};
@@ -4457,9 +4478,7 @@ class QuotesViewProvider {
 
     function persistViewState() {
       viewState = {
-        editingGroups,
         collapsedGroups,
-        addingGroups,
         aiOpen,
         aiPrompt,
         tableSort,
@@ -4482,9 +4501,9 @@ class QuotesViewProvider {
         ...viewState,
         ...nextState
       };
-      editingGroups = viewState.editingGroups || {};
+      editingGroups = {};
       collapsedGroups = viewState.collapsedGroups || {};
-      addingGroups = viewState.addingGroups || {};
+      addingGroups = {};
       aiOpen = Boolean(viewState.aiOpen);
       aiPrompt = viewState.aiPrompt || '';
       tableSort = viewState.tableSort || {};
@@ -8253,9 +8272,7 @@ function sanitizeViewState(value) {
 
   const state = {};
 
-  state.editingGroups = sanitizeBooleanMap(value.editingGroups);
   state.collapsedGroups = normalizeCollapsedGroups(value.collapsedGroups);
-  state.addingGroups = sanitizeBooleanMap(value.addingGroups);
   state.aiOpen = Boolean(value.aiOpen);
   state.aiPrompt = String(value.aiPrompt || '').slice(0, 5000);
   state.tableSort = sanitizeTableSortState(value.tableSort);
@@ -8267,20 +8284,6 @@ function sanitizeViewState(value) {
 function sanitizeSelectedIndexCode(value) {
   const code = normalizeCode(String(value || ''));
   return INDEX_SYMBOLS.some((symbol) => symbol.code === code) ? code : '';
-}
-
-function sanitizeBooleanMap(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-
-  return Object.entries(value).reduce((items, [key, enabled]) => {
-    const name = String(key || '').trim();
-    if (name && enabled) {
-      items[name] = true;
-    }
-    return items;
-  }, {});
 }
 
 function sanitizeTableSortState(value) {
