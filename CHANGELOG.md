@@ -8,6 +8,16 @@ All notable changes to this extension are documented in this file.
 - Add the newest version at the top.
 - Keep entries grouped as Added, Changed, Fixed, and Removed when applicable.
 
+## [0.4.2] - 2026-07-17
+
+### Added
+
+- 在行情面板底部状态栏最左侧新增动态刷新状态圆点：未刷新/非交易时段/超间隔未刷新为灰色，刷新中为绿色呼吸灯，刷新成功至下次刷新前为绿色常亮，刷新失败为红色。颜色采用 VS Code 主题语义色，独立于股票涨跌色配置；webview 端 1s 定时器实时重算，可在自动刷新断链或被暂停时直观变灰。
+
+### Changed
+
+- Bumped the extension version from `0.4.1` to `0.4.2`.
+
 ## [0.4.1] - 2026-07-17
 
 ### Fixed

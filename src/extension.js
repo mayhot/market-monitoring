@@ -308,6 +308,7 @@ class MarketMonitor {
     this.lastError = '';
     this.lastUpdatedAt = cachedSnapshot.updatedAt;
     this.lastUpdatedDate = cachedSnapshot.updatedDate;
+    this.lastRefreshedAtMs = 0;
     this.isRefreshing = false;
     this.collapsedGroups = {};
     this.editingRefreshPaused = false;
@@ -1168,6 +1169,7 @@ class MarketMonitor {
       this.groupStatsQuotes = mergeQuoteUpdates(fetchedQuotes, this.groupStatsQuotes, quoteSymbols);
       this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       this.lastUpdatedDate = getShanghaiDateString();
+      this.lastRefreshedAtMs = Date.now();
       if (marketBreadthPromise) {
         await marketBreadthPromise;
       }
@@ -1458,10 +1460,14 @@ class MarketMonitor {
   createSnapshot(phaseName, loading = false) {
     const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.triggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes);
     const groupsWithSummaryDrawdown = this.attachGroupSummaryDrawdowns(groups);
+    const isTradingActive = getMarketPhase(mergeQuoteSymbols(this.config.symbols, INDEX_SYMBOLS)).isActive;
     return {
       running: this.running,
       loading,
       phaseName,
+      isTradingActive,
+      lastRefreshedAt: this.lastRefreshedAtMs || 0,
+      refreshIntervalSeconds: this.config.refreshIntervalSeconds,
       updatedAt: this.lastUpdatedAt,
       error: this.lastError,
       language: this.config.language,
@@ -2596,7 +2602,7 @@ class QuotesViewProvider {
 
     .index-dock {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) max-content;
+      grid-template-columns: auto minmax(0, 1fr) max-content;
       gap: 4px 8px;
       align-items: center;
       flex: 0 0 auto;
@@ -2608,7 +2614,7 @@ class QuotesViewProvider {
     }
 
     .index-widget {
-      grid-column: 2;
+      grid-column: 3;
       display: flex;
       align-items: center;
       justify-content: flex-end;
@@ -2617,8 +2623,45 @@ class QuotesViewProvider {
       justify-self: end;
     }
 
-    .footer-status {
+    .refresh-dot {
       grid-column: 1;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      justify-self: start;
+      align-self: center;
+      background: var(--vscode-descriptionForeground, #8b949e);
+    }
+
+    .refresh-dot.success {
+      background: var(--vscode-testing-iconPassed, #3fb950);
+    }
+
+    .refresh-dot.refreshing {
+      background: var(--vscode-testing-iconPassed, #3fb950);
+      animation: market-monitoring-dot-breathe 1.2s ease-in-out infinite;
+    }
+
+    .refresh-dot.failed {
+      background: var(--vscode-testing-iconFailed, #f14c4c);
+    }
+
+    @keyframes market-monitoring-dot-breathe {
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.3;
+        transform: scale(0.8);
+      }
+    }
+
+    .footer-status {
+      grid-column: 2;
       min-width: 0;
       max-width: 100%;
       overflow: hidden;
@@ -2737,6 +2780,7 @@ class QuotesViewProvider {
   <section class="ai-panel" id="ai-panel" hidden></section>
   <main id="app"></main>
   <footer class="index-dock">
+    <span id="refresh-dot" class="refresh-dot idle" aria-hidden="true"></span>
     <div id="refresh-error" class="footer-status" hidden></div>
     <div class="index-widget">
       <div id="index-quote" class="index-quote flat">--</div>
@@ -2753,6 +2797,10 @@ class QuotesViewProvider {
         start: '启动',
         pause: '暂停',
         refresh: '刷新',
+        dotIdle: '休眠（非交易时段或超间隔未刷新）',
+        dotRefreshing: '刷新中',
+        dotSuccess: '已刷新',
+        dotFailed: '刷新失败',
         importCsv: '导入 CSV',
         exportCsv: '导出 CSV',
         settings: '设置',
@@ -2829,6 +2877,10 @@ class QuotesViewProvider {
         start: 'Start',
         pause: 'Pause',
         refresh: 'Refresh',
+        dotIdle: 'Idle (non-trading or overdue)',
+        dotRefreshing: 'Refreshing',
+        dotSuccess: 'Up to date',
+        dotFailed: 'Refresh failed',
         importCsv: 'Import CSV',
         exportCsv: 'Export CSV',
         settings: 'Settings',
@@ -2908,6 +2960,7 @@ class QuotesViewProvider {
     const aiPanel = document.getElementById('ai-panel');
     const indexQuote = document.getElementById('index-quote');
     const refreshError = document.getElementById('refresh-error');
+    const refreshDot = document.getElementById('refresh-dot');
     const dynamicColors = document.getElementById('dynamic-colors');
     let locale = 'zh-CN';
     let editingGroups = {};
@@ -3413,6 +3466,7 @@ class QuotesViewProvider {
 
       app.classList.toggle('refreshing', Boolean(snapshot.loading));
       renderFooterStatus(snapshot);
+      updateRefreshDot(snapshot);
       if (shouldFreezeQuoteRender()) {
         renderIndex(snapshot);
         if (flashGroupNames) {
@@ -3464,6 +3518,39 @@ class QuotesViewProvider {
       refreshError.textContent = '';
       refreshError.title = '';
       refreshError.className = 'footer-status';
+    }
+
+    function updateRefreshDot(snapshot) {
+      if (!refreshDot) {
+        return;
+      }
+      let cls = 'refresh-dot';
+      let title = '';
+      if (!snapshot || !snapshot.running) {
+        cls += ' idle';
+        title = t('dotIdle');
+      } else if (snapshot.loading) {
+        cls += ' refreshing';
+        title = t('dotRefreshing');
+      } else if (snapshot.error) {
+        cls += ' failed';
+        title = t('dotFailed');
+      } else if (!snapshot.isTradingActive) {
+        cls += ' idle';
+        title = t('dotIdle');
+      } else {
+        const intervalMs = Math.max(2, Number(snapshot.refreshIntervalSeconds) || 5) * 1000;
+        const last = Number(snapshot.lastRefreshedAt) || 0;
+        if (last && Date.now() - last > intervalMs + 3000) {
+          cls += ' idle';
+          title = t('dotIdle');
+        } else {
+          cls += ' success';
+          title = t('dotSuccess');
+        }
+      }
+      refreshDot.className = cls;
+      refreshDot.title = title;
     }
 
 
@@ -4644,6 +4731,12 @@ class QuotesViewProvider {
         column
       });
     }
+
+    window.setInterval(() => {
+      if (latestSnapshot) {
+        updateRefreshDot(latestSnapshot);
+      }
+    }, 1000);
 
     syncEditingState(true);
     vscode.postMessage({ command: 'webviewReady', collapsedGroups, editing: isEditingActive() });
