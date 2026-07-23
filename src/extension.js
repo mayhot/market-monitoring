@@ -4383,36 +4383,43 @@ class QuotesViewProvider {
     function calculateGroupPortfolioSummary(items) {
       let totalAssets = 0;
       let dailyProfit = 0;
+      let dailyProfitForPercent = 0;
       let previousAssets = 0;
       let assetCount = 0;
       let profitCount = 0;
+      let profitPercentCount = 0;
 
       for (const item of items) {
-        if (item.cost === null || item.cost === undefined || item.holding === null || item.holding === undefined || item.price === null || item.price === undefined) {
-          continue;
-        }
-
         const holding = Number(item.holding);
         if (!Number.isFinite(holding) || holding <= 0) {
           continue;
         }
 
-        totalAssets += item.price * holding;
-        assetCount += 1;
-
-        if (item.change !== null && item.change !== undefined) {
-          dailyProfit += item.change * holding;
-          profitCount += 1;
+        const price = Number(item.price);
+        if (Number.isFinite(price)) {
+          totalAssets += price * holding;
+          assetCount += 1;
         }
-        if (item.previousClose !== null && item.previousClose !== undefined) {
-          previousAssets += item.previousClose * holding;
+
+        const change = item.change === null || item.change === undefined ? null : Number(item.change);
+        if (Number.isFinite(change)) {
+          const profit = change * holding;
+          dailyProfit += profit;
+          profitCount += 1;
+
+          const previousClose = item.previousClose === null || item.previousClose === undefined ? null : Number(item.previousClose);
+          if (Number.isFinite(previousClose) && previousClose > 0) {
+            dailyProfitForPercent += profit;
+            previousAssets += previousClose * holding;
+            profitPercentCount += 1;
+          }
         }
       }
 
       return {
         totalAssets: assetCount > 0 ? totalAssets : null,
         dailyProfit: profitCount > 0 ? dailyProfit : null,
-        dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
+        dailyProfitPercent: profitPercentCount > 0 && previousAssets > 0 ? (dailyProfitForPercent / previousAssets) * 100 : null
       };
     }
 
@@ -9708,36 +9715,43 @@ function toPinyin(value) {
 function calculateGroupPortfolioSummaryValue(items) {
   let totalAssets = 0;
   let dailyProfit = 0;
+  let dailyProfitForPercent = 0;
   let previousAssets = 0;
   let assetCount = 0;
   let profitCount = 0;
+  let profitPercentCount = 0;
 
   for (const item of items) {
-    if (item.cost === null || item.cost === undefined || item.holding === null || item.holding === undefined || item.price === null || item.price === undefined) {
-      continue;
-    }
-
     const holding = Number(item.holding);
     if (!Number.isFinite(holding) || holding <= 0) {
       continue;
     }
 
-    totalAssets += item.price * holding;
-    assetCount += 1;
-
-    if (item.change !== null && item.change !== undefined) {
-      dailyProfit += item.change * holding;
-      profitCount += 1;
+    const price = Number(item.price);
+    if (Number.isFinite(price)) {
+      totalAssets += price * holding;
+      assetCount += 1;
     }
-    if (item.previousClose !== null && item.previousClose !== undefined) {
-      previousAssets += item.previousClose * holding;
+
+    const change = item.change === null || item.change === undefined ? null : Number(item.change);
+    if (Number.isFinite(change)) {
+      const profit = change * holding;
+      dailyProfit += profit;
+      profitCount += 1;
+
+      const previousClose = item.previousClose === null || item.previousClose === undefined ? null : Number(item.previousClose);
+      if (Number.isFinite(previousClose) && previousClose > 0) {
+        dailyProfitForPercent += profit;
+        previousAssets += previousClose * holding;
+        profitPercentCount += 1;
+      }
     }
   }
 
   return {
     totalAssets: assetCount > 0 ? totalAssets : null,
     dailyProfit: profitCount > 0 ? dailyProfit : null,
-    dailyProfitPercent: profitCount > 0 && previousAssets > 0 ? (dailyProfit / previousAssets) * 100 : null
+    dailyProfitPercent: profitPercentCount > 0 && previousAssets > 0 ? (dailyProfitForPercent / previousAssets) * 100 : null
   };
 }
 
