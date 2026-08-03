@@ -283,9 +283,7 @@ class MarketMonitor {
     this.output = output;
     this.database = new MarketDatabase(context, output);
     this.timer = undefined;
-    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
-    this.statusBarItem.command = 'marketMonitoring.refresh';
-    this.context.subscriptions.push(this.statusBarItem);
+
 
     this.running = false;
     const cachedSnapshot = readCachedQuoteSnapshot(this.context.globalState);
@@ -1456,43 +1454,7 @@ class MarketMonitor {
   updateViews(phaseName, loading = false) {
     const snapshot = this.createSnapshot(phaseName, loading);
     this.provider.update(snapshot);
-    this.updateStatusBar(snapshot);
     vscode.commands.executeCommand('setContext', 'marketMonitoring.hasAlerts', snapshot.alerts.length > 0);
-  }
-
-  updateStatusBar(snapshot) {
-    if (!this.config.showStatusBar) {
-      this.statusBarItem.hide();
-      return;
-    }
-
-    const pricedQuotes = snapshot.groups.flatMap((group) => group.items).filter((quote) => Number.isFinite(getQuoteDisplayChangePercent(quote)));
-    const head = pricedQuotes.slice(0, 3);
-
-    if (!this.running) {
-      this.statusBarItem.text = '$(graph-line) Market 已暂停';
-      this.statusBarItem.tooltip = '点击刷新市场行情';
-      this.statusBarItem.color = undefined;
-      this.statusBarItem.show();
-      return;
-    }
-
-    if (head.length === 0) {
-      this.statusBarItem.text = `$(graph-line) Market ${snapshot.phaseName}`;
-      this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
-      this.statusBarItem.color = undefined;
-      this.statusBarItem.show();
-      return;
-    }
-
-    const average = head.reduce((sum, quote) => sum + getQuoteDisplayChangePercent(quote), 0) / head.length;
-    const summary = head.map((quote) => `${quote.name} ${formatPercent(getQuoteDisplayChangePercent(quote))}`).join(' ');
-    this.statusBarItem.text = `$(graph-line) ${summary}`;
-    this.statusBarItem.tooltip = buildStatusTooltip(snapshot);
-    this.statusBarItem.color = snapshot.colors.mode === 'none'
-      ? undefined
-      : getTrendColor(average, snapshot.colors);
-    this.statusBarItem.show();
   }
 
   async notifyAlerts(alerts) {
@@ -5253,7 +5215,7 @@ function readConfig() {
     refreshIntervalSeconds: config.get('refreshIntervalSeconds', 5),
     marketBreadthRefreshIntervalSeconds: sanitizeMarketBreadthRefreshIntervalSeconds(config.get('marketBreadthRefreshIntervalSeconds', 300)),
     onlyDuringTradingTime: config.get('onlyDuringTradingTime', true),
-    showStatusBar: config.get('showStatusBar', false),
+
     indexSymbol: sanitizeSelectedIndexCode(config.get('indexSymbol', DEFAULT_INDEX_CODE)) || DEFAULT_INDEX_CODE,
     sortBy: sanitizeSortBy(config.get('sortBy', 'marketValue')),
     sortDirection: config.get('sortDirection', 'desc') === 'asc' ? 'asc' : 'desc',
@@ -10181,13 +10143,7 @@ function getColorPalette(mode) {
   };
 }
 
-function buildStatusTooltip(snapshot) {
-  const lines = [`Market Monitoring ${snapshot.phaseName}`];
-  if (snapshot.error) {
-    lines.push(snapshot.error);
-  }
-  return lines.join('\n');
-}
+
 
 function sanitizeSortBy(value) {
   const allowed = new Set(['configured', 'marketValue', 'changePercent', 'price', 'name', 'alias', 'code']);
