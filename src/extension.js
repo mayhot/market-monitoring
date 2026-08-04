@@ -155,10 +155,16 @@ function activate(context) {
       monitor.renameGroup(message.oldName, message.newName);
     } else if (message.command === 'removeGroup') {
       monitor.removeGroup(message.name);
+    } else if (message.command === 'moveGroup') {
+      monitor.moveGroup(message.name, message.direction);
     } else if (message.command === 'removeSymbol') {
       monitor.removeSymbol(message.index);
     } else if (message.command === 'moveSymbol') {
       monitor.moveSymbol(message.index, message.direction);
+    } else if (message.command === 'moveSymbolToEdge') {
+      monitor.moveSymbolToEdge(message.index, message.direction);
+    } else if (message.command === 'moveSymbolToGroup') {
+      monitor.moveSymbolToGroup(message.index, message.targetGroup);
     } else if (message.command === 'updateSymbolField') {
       monitor.updateSymbolField(message.index, message.field, message.value);
     } else if (message.command === 'collapsedGroupsChanged') {
@@ -895,6 +901,26 @@ class MarketMonitor {
     vscode.window.showInformationMessage(`已删除分组 ${groupName} 和 ${removedSymbols.length} 个标的`);
   }
 
+  async moveGroup(name, direction) {
+    const groupName = normalizeGroupName(name);
+    const offset = direction === 'up' ? -1 : direction === 'down' ? 1 : 0;
+
+    if (!groupName || offset === 0 || !this.config.groups.includes(groupName)) {
+      return;
+    }
+
+    const currentIndex = this.config.groups.indexOf(groupName);
+    const nextIndex = currentIndex + offset;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= this.config.groups.length) {
+      return;
+    }
+
+    const nextGroups = [...this.config.groups];
+    [nextGroups[currentIndex], nextGroups[nextIndex]] = [nextGroups[nextIndex], nextGroups[currentIndex]];
+    await updateConfiguredGroups(nextGroups);
+  }
+
   async removeSymbol(index) {
     const parsedIndex = Number(index);
     if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length) {
@@ -937,6 +963,62 @@ class MarketMonitor {
     const nextIndex = groupIndexes[nextGroupPosition];
     const nextSymbols = [...this.config.symbols];
     [nextSymbols[parsedIndex], nextSymbols[nextIndex]] = [nextSymbols[nextIndex], nextSymbols[parsedIndex]];
+    await updateConfiguredSymbols(nextSymbols);
+  }
+
+  async moveSymbolToEdge(index, direction) {
+    const parsedIndex = Number(index);
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length) {
+      return;
+    }
+
+    const symbol = this.config.symbols[parsedIndex];
+    const groupIndexes = this.config.symbols
+      .map((item, currentIndex) => item.group === symbol.group ? currentIndex : -1)
+      .filter((currentIndex) => currentIndex >= 0);
+    const groupPosition = groupIndexes.indexOf(parsedIndex);
+
+    if (groupPosition < 0 || groupIndexes.length <= 1) {
+      return;
+    }
+
+    const targetPosition = direction === 'top' ? 0 : groupIndexes.length - 1;
+    if (groupPosition === targetPosition) {
+      return;
+    }
+
+    const nextSymbols = [...this.config.symbols];
+    const [moved] = nextSymbols.splice(parsedIndex, 1);
+    const targetIndex = groupIndexes[targetPosition];
+    const adjustedTarget = targetIndex > parsedIndex ? targetIndex - 1 : targetIndex;
+    nextSymbols.splice(adjustedTarget, 0, moved);
+    await updateConfiguredSymbols(nextSymbols);
+  }
+
+  async moveSymbolToGroup(index, targetGroup) {
+    const parsedIndex = Number(index);
+    const normalizedTargetGroup = normalizeGroupName(targetGroup);
+
+    if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= this.config.symbols.length) {
+      return;
+    }
+
+    if (!normalizedTargetGroup || !this.config.groups.includes(normalizedTargetGroup)) {
+      return;
+    }
+
+    const symbol = this.config.symbols[parsedIndex];
+    const currentGroup = normalizeGroupName(symbol.group) || DEFAULT_GROUP;
+
+    if (currentGroup === normalizedTargetGroup) {
+      return;
+    }
+
+    const nextSymbols = [...this.config.symbols];
+    nextSymbols[parsedIndex] = {
+      ...symbol,
+      group: normalizedTargetGroup
+    };
     await updateConfiguredSymbols(nextSymbols);
   }
 
@@ -2365,25 +2447,12 @@ class QuotesViewProvider {
       position: relative;
     }
 
-    .group-menu > summary {
-      list-style: none;
-      cursor: pointer;
-    }
-
-    .group-menu > summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .group-menu > summary::marker {
-      content: '';
-    }
-
     .group-menu-dropdown {
+      display: none;
       position: absolute;
       right: 0;
       top: 100%;
       z-index: 20;
-      display: flex;
       flex-direction: column;
       gap: 2px;
       padding: 4px;
@@ -2392,6 +2461,10 @@ class QuotesViewProvider {
       background: var(--surface);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
       min-width: 140px;
+    }
+
+    .group-menu.open .group-menu-dropdown {
+      display: flex;
     }
 
     .group-menu-item {
@@ -2412,6 +2485,16 @@ class QuotesViewProvider {
 
     .group-menu-item:hover {
       background: var(--vscode-list-hoverBackground);
+    }
+
+    .group-menu-item.disabled {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    .group-menu-item:disabled {
+      opacity: 0.4;
+      pointer-events: none;
     }
 
     .group-menu-icon {
@@ -2854,6 +2937,68 @@ class QuotesViewProvider {
       justify-content: flex-end;
     }
 
+    .symbol-menu {
+      position: relative;
+    }
+
+    .symbol-menu-dropdown {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      z-index: 100;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      min-width: 140px;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    .symbol-menu.open .symbol-menu-dropdown {
+      display: flex;
+    }
+
+    .group.menu-open .quote-table {
+      overflow: visible;
+    }
+
+    .symbol-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      height: 26px;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      background: transparent;
+      color: var(--vscode-foreground);
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .symbol-menu-item:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .symbol-menu-item .group-menu-icon {
+      flex: 0 0 auto;
+      width: 16px;
+      text-align: center;
+    }
+
+    .symbol-menu-item .group-menu-label {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+    }
+
     .cell-input {
       width: 100%;
       min-width: 0;
@@ -3115,6 +3260,8 @@ class QuotesViewProvider {
         showColumn: '显示',
         moveUp: '上移',
         moveDown: '下移',
+        moveToTop: '置顶',
+        moveToBottom: '置底',
         expand: '展开',
         collapse: '折叠',
         currentAssets: '当前总资产',
@@ -3137,6 +3284,11 @@ class QuotesViewProvider {
         fallingCount: '下降数',
         doneEditing: '完成修改',
         editGroup: '修改分组',
+        moveGroupUp: '上移分组',
+        moveGroupDown: '下移分组',
+        moveToGroup: '移动到分组',
+        moveToGroupTitle: '选择目标分组',
+        noOtherGroups: '没有其他分组',
         searchPlaceholder: '搜索名称、代码或拼音',
         addToGroup: '添加到该分组',
         searchPending: '搜索中...',
@@ -3198,6 +3350,8 @@ class QuotesViewProvider {
         showColumn: 'Show',
         moveUp: 'Move up',
         moveDown: 'Move down',
+        moveToTop: 'Move to top',
+        moveToBottom: 'Move to bottom',
         expand: 'Expand',
         collapse: 'Collapse',
         currentAssets: 'Current assets',
@@ -3220,6 +3374,11 @@ class QuotesViewProvider {
         fallingCount: 'Falling',
         doneEditing: 'Done',
         editGroup: 'Edit group',
+        moveGroupUp: 'Move group up',
+        moveGroupDown: 'Move group down',
+        moveToGroup: 'Move to group',
+        moveToGroupTitle: 'Select target group',
+        noOtherGroups: 'No other groups',
         searchPlaceholder: 'Search name, code, or pinyin',
         addToGroup: 'Add to this group',
         searchPending: 'Searching...',
@@ -3322,33 +3481,65 @@ class QuotesViewProvider {
       }
     });
     document.addEventListener('click', (event) => {
-      document.querySelectorAll('details.group-menu[open]').forEach((details) => {
-        if (!details.contains(event.target)) {
-          details.open = false;
+      document.querySelectorAll('.group-menu.open, .symbol-menu.open').forEach((menu) => {
+        if (!menu.contains(event.target)) {
+          menu.classList.remove('open');
+          const group = menu.closest('.group');
+          if (group) {
+            group.classList.remove('menu-open');
+          }
         }
       });
     });
-    document.addEventListener('toggle', (event) => {
-      const details = event.target;
-      if (!details || !details.classList || !details.classList.contains('group-menu')) {
-        return;
-      }
-      const group = details.closest('.group');
-      if (group) {
-        group.classList.toggle('menu-open', details.open);
-      }
-    }, true);
     app.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button) {
         return;
       }
-      const index = Number(button.dataset.index);
       const action = button.dataset.action;
+      if (action === 'toggleMenu') {
+        const menu = button.closest('.group-menu, .symbol-menu');
+        if (menu) {
+          const wasOpen = menu.classList.contains('open');
+          document.querySelectorAll('.group-menu.open, .symbol-menu.open').forEach((m) => {
+            m.classList.remove('open');
+            const g = m.closest('.group');
+            if (g) {
+              g.classList.remove('menu-open');
+            }
+          });
+          if (!wasOpen) {
+            menu.classList.add('open');
+            const group = menu.closest('.group');
+            if (group) {
+              group.classList.add('menu-open');
+            }
+          }
+        }
+        return;
+      }
+      const menu = button.closest('.group-menu, .symbol-menu');
+      if (menu) {
+        menu.classList.remove('open');
+        const group = menu.closest('.group');
+        if (group) {
+          group.classList.remove('menu-open');
+        }
+      }
+      const index = Number(button.dataset.index);
       if (action === 'remove') {
         vscode.postMessage({ command: 'removeSymbol', index });
-      } else if (action === 'up' || action === 'down') {
-        vscode.postMessage({ command: 'moveSymbol', index, direction: action });
+      } else if (action === 'moveSymbolUp' || action === 'moveSymbolDown') {
+        vscode.postMessage({ command: 'moveSymbol', index, direction: action === 'moveSymbolUp' ? 'up' : 'down' });
+      } else if (action === 'moveSymbolTop' || action === 'moveSymbolBottom') {
+        vscode.postMessage({ command: 'moveSymbolToEdge', index, direction: action === 'moveSymbolTop' ? 'top' : 'bottom' });
+      } else if (action === 'moveSymbolToGroup') {
+        const targetGroup = button.dataset.targetGroup || '';
+        vscode.postMessage({ command: 'moveSymbolToGroup', index, targetGroup });
+      } else if (action === 'moveGroupUp' || action === 'moveGroupDown') {
+        const group = button.dataset.group || '';
+        const direction = action === 'moveGroupUp' ? 'up' : 'down';
+        vscode.postMessage({ command: 'moveGroup', name: group, direction });
       } else if (action === 'editGroup') {
         const group = button.dataset.group || '';
         const nextEditing = !editingGroups[group];
@@ -4174,7 +4365,7 @@ class QuotesViewProvider {
         return '<div class="empty">' + escapeHtml(t('noSymbols')) + '</div>';
       }
 
-      return visibleGroups.map((group) => {
+      return visibleGroups.map((group, index) => {
         const editing = Boolean(editingGroups[group.name]);
         const collapsed = Boolean(collapsedGroups[group.name]);
         const columns = snapshot.quoteColumns || ['name', 'price', 'changePercent'];
@@ -4209,7 +4400,7 @@ class QuotesViewProvider {
             '</span>' +
             '<span class="group-title-actions">' +
               renderGroupSummaryInline(group.items, snapshot.groupSummaryMetrics, snapshot.compactLargeAmounts, group.summaryDrawdown) +
-              renderGroupMenu(group.name, editing, adding) +
+              renderGroupMenu(group.name, editing, adding, index, visibleGroups.length) +
             '</span>' +
           '</div>' +
           renderGroupInlinePanel(group.name, editing, adding) +
@@ -4446,18 +4637,27 @@ class QuotesViewProvider {
       return '<button class="secondary icon-button" data-action="editGroup" data-group="' + escapeHtml(groupName) + '" title="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '" aria-label="' + (editing ? escapeHtml(t('doneEditing')) : escapeHtml(t('editGroup'))) + '">' + (editing ? '✓' : '✎') + '</button>';
     }
 
-    function renderGroupMenu(groupName, editing, adding) {
-      return '<details class="group-menu">' +
-        '<summary class="secondary icon-button" title="' + escapeHtml(t('more')) + '" aria-label="' + escapeHtml(t('more')) + '">⋯</summary>' +
+    function renderGroupMenu(groupName, editing, adding, index, totalGroups) {
+      const isFirst = index === 0;
+      const isLast = index >= totalGroups - 1;
+      const hasMultiple = totalGroups > 1;
+      return '<div class="group-menu">' +
+        '<button type="button" class="secondary icon-button" data-action="toggleMenu" title="' + escapeHtml(t('more')) + '" aria-label="' + escapeHtml(t('more')) + '">⋯</button>' +
         '<div class="group-menu-dropdown">' +
+          (hasMultiple ? renderGroupMenuItem('moveGroupUp', groupName, '↑', t('moveGroupUp'), isFirst) : '') +
+          (hasMultiple ? renderGroupMenuItem('moveGroupDown', groupName, '↓', t('moveGroupDown'), isLast) : '') +
+          (hasMultiple ? '<div style="height:1px;background:var(--border);margin:3px 0"></div>' : '') +
           renderGroupMenuItem('addToGroup', groupName, adding ? '−' : '＋', adding ? t('collapseAdd') : t('addSymbol')) +
           renderGroupMenuItem('editGroup', groupName, editing ? '✓' : '✎', editing ? t('doneEditing') : t('editGroup')) +
         '</div>' +
-      '</details>';
+      '</div>';
     }
 
-    function renderGroupMenuItem(action, groupName, icon, label) {
-      return '<button class="secondary group-menu-item" data-action="' + action + '" data-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '"><span class="group-menu-icon">' + icon + '</span><span class="group-menu-label">' + escapeHtml(label) + '</span></button>';
+    function renderGroupMenuItem(action, groupName, icon, label, disabled) {
+      const disabledAttr = disabled ? ' disabled' : '';
+      return '<button type="button" class="secondary group-menu-item' + (disabled ? ' disabled' : '') + '" data-action="' + action + '" data-group="' + escapeHtml(groupName) + '"' + disabledAttr + ' title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' +
+        '<span class="group-menu-icon">' + icon + '</span><span class="group-menu-label">' + escapeHtml(label) + '</span>' +
+      '</button>';
     }
 
     function renderGroupSymbolSearch(groupName) {
@@ -4523,11 +4723,49 @@ class QuotesViewProvider {
       return '<article class="quote ' + gridClass + (highlightClass ? ' ' + highlightClass : '') + (hasAlert ? ' alert' : '') + (editing ? ' editing' : '') + '" data-columns="' + escapeHtml(columns.join(',')) + '">' +
         cells +
         (editing ? '<div class="quote-actions">' +
-          '<button class="secondary icon-button" data-action="up" data-index="' + index + '" title="' + escapeHtml(t('moveUp')) + '" ' + (first ? 'disabled' : '') + '>↑</button>' +
-          '<button class="secondary icon-button" data-action="down" data-index="' + index + '" title="' + escapeHtml(t('moveDown')) + '" ' + (last ? 'disabled' : '') + '>↓</button>' +
           '<button class="secondary icon-button danger" data-action="remove" data-index="' + index + '" data-name="' + escapeHtml(quote.name) + '" title="' + escapeHtml(t('deleteSymbol')) + '" aria-label="' + escapeHtml(t('deleteSymbol')) + '">×</button>' +
+          renderSymbolMenu(index, quote, snapshot, first, last) +
         '</div>' : '') +
       '</article>';
+    }
+
+    function renderSymbolMenu(index, quote, snapshot, isFirst, isLast) {
+      const currentGroup = String(quote.group || '').trim() || defaultGroupName;
+      const allGroups = Array.isArray(snapshot.configuredGroups) ? snapshot.configuredGroups : [];
+      const otherGroups = allGroups.filter((g) => String(g || '').trim() !== currentGroup);
+
+      function moveItem(action, icon, label, disabled) {
+        const dis = disabled ? ' disabled' : '';
+        return '<button type="button" class="secondary symbol-menu-item' + (disabled ? ' disabled' : '') + '" data-action="' + action + '" data-index="' + index + '"' + dis + ' title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' +
+          '<span class="group-menu-icon">' + icon + '</span><span class="group-menu-label">' + escapeHtml(label) + '</span>' +
+        '</button>';
+      }
+
+      const moveItems = moveItem('moveSymbolTop', '⤒', t('moveToTop'), isFirst) +
+        moveItem('moveSymbolUp', '↑', t('moveUp'), isFirst) +
+        moveItem('moveSymbolDown', '↓', t('moveDown'), isLast) +
+        moveItem('moveSymbolBottom', '⤓', t('moveToBottom'), isLast);
+
+      const groupItems = otherGroups.map((groupName) =>
+        '<button type="button" class="secondary symbol-menu-item" data-action="moveSymbolToGroup" data-index="' + index + '" data-target-group="' + escapeHtml(groupName) + '" title="' + escapeHtml(groupName) + '">' +
+          '<span class="group-menu-icon">→</span><span class="group-menu-label">' + escapeHtml(groupName) + '</span>' +
+        '</button>'
+      ).join('');
+
+      const hasOtherGroups = otherGroups.length > 0;
+      const separator = '<div style="height:1px;background:var(--border);margin:3px 0"></div>';
+
+      return '<div class="symbol-menu">' +
+        '<button type="button" class="secondary icon-button" data-action="toggleMenu" title="' + escapeHtml(t('more')) + '" aria-label="' + escapeHtml(t('more')) + '">⋯</button>' +
+        '<div class="symbol-menu-dropdown">' +
+          moveItems +
+          separator +
+          (hasOtherGroups
+            ? '<div class="symbol-menu-item" style="font-weight:600;cursor:default;color:var(--muted);pointer-events:none">' + escapeHtml(t('moveToGroupTitle')) + '</div>' + groupItems
+            : '<div class="symbol-menu-item" style="cursor:default;color:var(--muted);pointer-events:none">' + escapeHtml(t('noOtherGroups')) + '</div>'
+          ) +
+        '</div>' +
+      '</div>';
     }
 
     function getQuoteHighlightClass(quote, snapshot) {
@@ -5421,10 +5659,12 @@ async function createAiManagementPlan(prompt, config, output) {
     '你是 Market Monitoring VS Code 扩展的分组和标的管理助手。',
     '你必须只返回 JSON，不要 Markdown，不要解释。',
     '根据用户自然语言，把需求转换为 actions 数组。',
-    '可用 action.type：addGroup, renameGroup, removeGroup, addSymbol, removeSymbol, moveSymbol, renameSymbol, updateSymbol。',
+    '可用 action.type：addGroup, renameGroup, removeGroup, moveGroup, addSymbol, removeSymbol, moveSymbol, moveSymbolToGroup, renameSymbol, updateSymbol。',
     '字段约定：group/name/newName/oldName/oldGroup/sourceGroup/fromGroup/code/cost/holding。',
     'addSymbol 可以只给 name，扩展会搜索匹配标的；如果用户给了股票代码，必须放到 code。',
     'removeGroup 会删除分组，并同时删除该分组内的所有标的。',
+    'moveGroup 支持 direction 字段（up/down）表示移动方向。',
+    'moveSymbolToGroup 需要 code 或 name 标识标的，以及 targetGroup 字段指定目标分组。',
     '不要编造不存在于当前列表中的旧标的代码；不确定时优先用 name。',
     '返回格式：{"actions":[...],"note":"简短说明"}'
   ].join('\n');
@@ -5590,6 +5830,35 @@ async function applyAiManagementPlan(plan, config, output, database) {
       continue;
     }
 
+    if (action.type === 'moveGroup') {
+      const groupName = normalizeGroupName(action.name || action.group);
+      const direction = action.direction === 'up' || action.direction === 'down'
+        ? action.direction
+        : (action.position === 'up' || action.position === 'first' || action.order === 'asc' ? 'up' : 'down');
+      if (!groupName || !nextGroups.includes(groupName)) {
+        warnings.push(`分组不存在，无法移动：${groupName || '(空)'}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'groupNotFound', groupName });
+        continue;
+      }
+      if (nextGroups.length <= 1) {
+        warnings.push('只有一个分组，无法移动');
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'onlyOneGroup', groupName });
+        continue;
+      }
+      const currentIndex = nextGroups.indexOf(groupName);
+      const offset = direction === 'up' ? -1 : 1;
+      const nextIndex = currentIndex + offset;
+      if (nextIndex < 0 || nextIndex >= nextGroups.length) {
+        warnings.push(`分组已在${direction === 'up' ? '最前' : '最后'}位置，无法继续移动：${groupName}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'boundaryReached', groupName, direction });
+        continue;
+      }
+      [nextGroups[currentIndex], nextGroups[nextIndex]] = [nextGroups[nextIndex], nextGroups[currentIndex]];
+      changes.push(`${direction === 'up' ? '上移' : '下移'}分组：${groupName}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, groupName, direction });
+      continue;
+    }
+
     if (action.type === 'addSymbol') {
       const symbol = await resolveAiSymbol(action, config, warnings, output, database);
       if (!symbol) {
@@ -5634,6 +5903,25 @@ async function applyAiManagementPlan(plan, config, output, database) {
       nextSymbols[symbolIndex] = { ...currentSymbol, group };
       changes.push(`移动标的：${currentSymbol.name} (${currentSymbol.code}) -> ${group}`);
       appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol: currentSymbol, group });
+      continue;
+    }
+
+    if (action.type === 'moveSymbolToGroup') {
+      const targetGroup = normalizeGroupName(action.targetGroup || action.group || action.newGroup);
+      if (!targetGroup || !nextGroups.includes(targetGroup)) {
+        warnings.push(`目标分组不存在：${targetGroup || '(空)'}`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'groupNotFound', targetGroup });
+        continue;
+      }
+      const currentGroup = normalizeGroupName(currentSymbol.group) || DEFAULT_GROUP;
+      if (currentGroup === targetGroup) {
+        warnings.push(`标的已在分组 ${targetGroup} 中`);
+        appendLog(output, 'WARN', 'AI action skipped', { index: actionIndex, type: action.type, reason: 'alreadyInGroup', targetGroup });
+        continue;
+      }
+      nextSymbols[symbolIndex] = { ...currentSymbol, group: targetGroup };
+      changes.push(`移动标的：${currentSymbol.name} (${currentSymbol.code}) -> ${targetGroup}`);
+      appendLog(output, 'INFO', 'AI action applied', { index: actionIndex, type: action.type, symbol: currentSymbol, targetGroup });
       continue;
     }
 
@@ -5701,6 +5989,9 @@ function normalizeAiAction(action) {
     remove_group: 'removeGroup',
     deleteGroup: 'removeGroup',
     delete_group: 'removeGroup',
+    move_group: 'moveGroup',
+    move_symbol_to_group: 'moveSymbolToGroup',
+    moveSymbolToGroup: 'moveSymbolToGroup',
     add_symbol: 'addSymbol',
     remove_symbol: 'removeSymbol',
     deleteSymbol: 'removeSymbol',
@@ -5710,7 +6001,7 @@ function normalizeAiAction(action) {
     update_symbol: 'updateSymbol'
   };
   const type = aliases[action.type] || action.type;
-  const allowed = new Set(['addGroup', 'renameGroup', 'removeGroup', 'addSymbol', 'removeSymbol', 'moveSymbol', 'renameSymbol', 'updateSymbol']);
+  const allowed = new Set(['addGroup', 'renameGroup', 'removeGroup', 'moveGroup', 'moveSymbolToGroup', 'addSymbol', 'removeSymbol', 'moveSymbol', 'renameSymbol', 'updateSymbol']);
   return allowed.has(type) ? { ...action, type } : undefined;
 }
 
