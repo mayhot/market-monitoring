@@ -2807,19 +2807,41 @@ class QuotesViewProvider {
     }
 
     .name {
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .name-text {
+      flex: 1;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
+    .dot-column {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      margin-right: 4px;
+      gap: 2px;
+    }
+
     .holding-dot {
-      display: inline-block;
+      display: block;
       width: 4px;
       height: 4px;
-      margin-right: 4px;
       border-radius: 50%;
       background: color-mix(in srgb, var(--vscode-foreground) 78%, var(--focus) 22%);
-      vertical-align: 2px;
+    }
+
+    .etf-dot {
+      display: block;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 82%, var(--vscode-foreground) 18%);
     }
 
     .alert-badge {
@@ -3281,6 +3303,7 @@ class QuotesViewProvider {
         moveDown: '下移',
         moveToTop: '置顶',
         moveToBottom: '置底',
+        etfLabel: 'ETF',
         expand: '展开',
         collapse: '折叠',
         currentAssets: '当前总资产',
@@ -3371,6 +3394,7 @@ class QuotesViewProvider {
         moveDown: 'Move down',
         moveToTop: 'Move to top',
         moveToBottom: 'Move to bottom',
+        etfLabel: 'ETF',
         expand: 'Expand',
         collapse: 'Collapse',
         currentAssets: 'Current assets',
@@ -4707,8 +4731,11 @@ class QuotesViewProvider {
       }
       return symbolSearchResults.map((item) => {
         const selected = selectedSymbol && selectedSymbol.code === item.code;
+        const etfDot = isChinaEtfCode(item.code)
+          ? '<span class="etf-dot" role="img" title="' + escapeHtml(t('etfLabel')) + '" aria-label="' + escapeHtml(t('etfLabel')) + '"></span>'
+          : '';
         return '<button type="button" class="symbol-result' + (selected ? ' selected' : '') + '" data-action="selectSymbol" data-code="' + escapeHtml(item.code) + '" data-name="' + escapeHtml(item.name) + '" title="' + escapeHtml(t('choose') + ' ' + item.name) + '">' +
-          '<span class="symbol-result-main">' + escapeHtml(item.name) + '</span>' +
+          '<span class="symbol-result-main">' + etfDot + escapeHtml(item.name) + '</span>' +
           '<span class="symbol-result-code">' + escapeHtml(item.market || '') + ' ' + escapeHtml(item.code) + '</span>' +
         '</button>';
       }).join('');
@@ -4818,8 +4845,15 @@ class QuotesViewProvider {
         const holdingMarker = hasHoldingQuantity(quote)
           ? '<span class="holding-dot" role="img" title="' + heldLabel + '" aria-label="' + heldLabel + '"></span>'
           : '';
+        const etfLabelText = t('etfLabel');
+        const etfMarker = isChinaEtfCode(quote.code)
+          ? '<span class="etf-dot" role="img" title="' + escapeHtml(etfLabelText) + '" aria-label="' + escapeHtml(etfLabelText) + '"></span>'
+          : '';
+        const dotColumn = (etfMarker || holdingMarker)
+          ? '<span class="dot-column">' + etfMarker + holdingMarker + '</span>'
+          : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(displayName) + '">' + holdingMarker + escapeHtml(displayName) + renderAlertBadge(quote.alerts, alertText) + '</div>' +
+          '<div class="name" title="' + escapeHtml(displayName) + '">' + dotColumn + '<span class="name-text">' + escapeHtml(displayName) + '</span>' + renderAlertBadge(quote.alerts, alertText) + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -5090,6 +5124,10 @@ class QuotesViewProvider {
     function hasHoldingQuantity(quote) {
       const holding = Number(quote && quote.holding);
       return Number.isFinite(holding) && holding > 0;
+    }
+
+    function isChinaEtfCode(code) {
+      return /^sh5[1-9]\d{4}$/.test(String(code || '')) || /^sz159\d{3}$/.test(String(code || ''));
     }
 
     function getQuoteGridClass(columns) {
