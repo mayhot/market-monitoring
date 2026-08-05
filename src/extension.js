@@ -2838,8 +2838,8 @@ class QuotesViewProvider {
 
     .etf-dot {
       display: block;
-      width: 5px;
-      height: 5px;
+      width: 4px;
+      height: 4px;
       border-radius: 50%;
       background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 82%, var(--vscode-foreground) 18%);
     }
@@ -4846,14 +4846,15 @@ class QuotesViewProvider {
           ? '<span class="holding-dot" role="img" title="' + heldLabel + '" aria-label="' + heldLabel + '"></span>'
           : '';
         const etfLabelText = t('etfLabel');
-        const etfMarker = isChinaEtfCode(quote.code)
+        const etfCode = String(quote.code || '').trim().toLowerCase();
+        const etfMarker = isChinaEtfCode(etfCode)
           ? '<span class="etf-dot" role="img" title="' + escapeHtml(etfLabelText) + '" aria-label="' + escapeHtml(etfLabelText) + '"></span>'
           : '';
         const dotColumn = (etfMarker || holdingMarker)
           ? '<span class="dot-column">' + etfMarker + holdingMarker + '</span>'
           : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(displayName) + '">' + dotColumn + '<span class="name-text">' + escapeHtml(displayName) + '</span>' + renderAlertBadge(quote.alerts, alertText) + '</div>' +
+          '<div class="name" title="' + escapeHtml(displayName) + ' (' + escapeHtml(etfCode || '') + ')">' + dotColumn + '<span class="name-text">' + escapeHtml(displayName) + '</span>' + renderAlertBadge(quote.alerts, alertText) + '</div>' +
         '</div>';
       }
       if (column === 'alias') {
@@ -5127,7 +5128,14 @@ class QuotesViewProvider {
     }
 
     function isChinaEtfCode(code) {
-      return /^sh5[1-9]\d{4}$/.test(String(code || '')) || /^sz159\d{3}$/.test(String(code || ''));
+      const str = String(code || '').trim().toLowerCase();
+      if (!str) { return false; }
+      const r1 = /^sh5[1-9][0-9]{4}$/.test(str);
+      const r2 = /^sz159[0-9]{3}$/.test(str);
+      const r3 = /^5[1-9][0-9]{4}$/.test(str) && str.length === 6;
+      const r4 = /^159[0-9]{3}$/.test(str) && str.length === 6;
+      const result = r1 || r2 || r3 || r4;
+      return result;
     }
 
     function getQuoteGridClass(columns) {
