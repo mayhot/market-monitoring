@@ -1015,10 +1015,29 @@ class MarketMonitor {
     }
 
     const nextSymbols = [...this.config.symbols];
-    nextSymbols[parsedIndex] = {
-      ...symbol,
-      group: normalizedTargetGroup
-    };
+    const existingIndex = nextSymbols.findIndex((s, i) => i !== parsedIndex && s.code === symbol.code && normalizeGroupName(s.group) === normalizedTargetGroup);
+
+    if (existingIndex >= 0) {
+      const existing = nextSymbols[existingIndex];
+      const sourceHolding = Number(symbol.holding) || 0;
+      const existingHolding = Number(existing.holding) || 0;
+      const hasHolding = symbol.holding != null || existing.holding != null;
+
+      if (hasHolding) {
+        nextSymbols[existingIndex] = {
+          ...existing,
+          holding: sourceHolding + existingHolding
+        };
+      }
+
+      nextSymbols.splice(parsedIndex, 1);
+    } else {
+      nextSymbols[parsedIndex] = {
+        ...symbol,
+        group: normalizedTargetGroup
+      };
+    }
+
     await updateConfiguredSymbols(nextSymbols);
   }
 
@@ -3279,11 +3298,11 @@ class QuotesViewProvider {
         deleteGroup: '删除分组',
         more: '更多',
         collapseAdd: '收起添加',
-        addSymbol: '添加标的',
+        addSymbol: '添加',
         risingCount: '上升数',
         fallingCount: '下降数',
         doneEditing: '完成修改',
-        editGroup: '修改分组',
+        editGroup: '修改',
         moveGroupUp: '上移分组',
         moveGroupDown: '下移分组',
         moveToGroup: '移动到分组',
@@ -4644,11 +4663,11 @@ class QuotesViewProvider {
       return '<div class="group-menu">' +
         '<button type="button" class="secondary icon-button" data-action="toggleMenu" title="' + escapeHtml(t('more')) + '" aria-label="' + escapeHtml(t('more')) + '">⋯</button>' +
         '<div class="group-menu-dropdown">' +
-          (hasMultiple ? renderGroupMenuItem('moveGroupUp', groupName, '↑', t('moveGroupUp'), isFirst) : '') +
-          (hasMultiple ? renderGroupMenuItem('moveGroupDown', groupName, '↓', t('moveGroupDown'), isLast) : '') +
-          (hasMultiple ? '<div style="height:1px;background:var(--border);margin:3px 0"></div>' : '') +
           renderGroupMenuItem('addToGroup', groupName, adding ? '−' : '＋', adding ? t('collapseAdd') : t('addSymbol')) +
           renderGroupMenuItem('editGroup', groupName, editing ? '✓' : '✎', editing ? t('doneEditing') : t('editGroup')) +
+          (hasMultiple ? '<div style="height:1px;background:var(--border);margin:3px 0"></div>' : '') +
+          (hasMultiple ? renderGroupMenuItem('moveGroupUp', groupName, '↑', t('moveGroupUp'), isFirst) : '') +
+          (hasMultiple ? renderGroupMenuItem('moveGroupDown', groupName, '↓', t('moveGroupDown'), isLast) : '') +
         '</div>' +
       '</div>';
     }
