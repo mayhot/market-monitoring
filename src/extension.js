@@ -2564,10 +2564,10 @@ class QuotesViewProvider {
     .quote {
       display: grid;
       position: relative;
-      gap: 5px;
+      gap: 1px;
       align-items: center;
       min-width: 0;
-      padding: 4px 7px;
+      padding: 2px;
       border-top: 1px solid var(--border);
       background: transparent;
       transition: background 120ms ease;
@@ -2810,13 +2810,23 @@ class QuotesViewProvider {
       display: flex;
       align-items: center;
       overflow: hidden;
+      min-width: 0;
     }
 
     .name-text {
-      flex: 1;
+      flex: 0 0 auto;
       min-width: 0;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-right: 4px;
+    }
+
+    .alert-badges {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
       white-space: nowrap;
     }
 
@@ -2826,6 +2836,7 @@ class QuotesViewProvider {
       align-items: center;
       margin-right: 4px;
       gap: 2px;
+      flex: 0 0 auto;
     }
 
     .holding-dot {
@@ -4854,7 +4865,7 @@ class QuotesViewProvider {
           ? '<span class="dot-column">' + etfMarker + holdingMarker + '</span>'
           : '';
         return '<div class="' + cellClass + '">' +
-          '<div class="name" title="' + escapeHtml(displayName) + ' (' + escapeHtml(etfCode || '') + ')">' + dotColumn + '<span class="name-text">' + escapeHtml(displayName) + '</span>' + renderAlertBadge(quote.alerts, alertText) + '</div>' +
+          '<div class="name" title="' + escapeHtml(displayName) + ' (' + escapeHtml(etfCode || '') + ')">' + dotColumn + '<span class="name-text">' + escapeHtml(displayName) + '</span><span class="alert-badges">' + renderAlertBadge(quote.alerts, alertText) + '</span></div>' +
         '</div>';
       }
       if (column === 'alias') {
