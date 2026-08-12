@@ -2,7 +2,7 @@
   "name": "market-monitoring",
   "displayName": "Market Monitoring",
   "description": "Monitor custom market symbols, groups, alerts, and quote changes in VS Code.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "niangao",
   "license": "MIT",
   "repository": {
@@ -1024,6 +1024,16 @@
           "minimum": 1000,
           "maximum": 20000,
           "description": "Quote request timeout in milliseconds."
+        },
+        "marketMonitoring.showDailyProfitInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show today's profit and profit percentage in the VS Code status bar."
+        },
+        "marketMonitoring.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start market data polling on VS Code startup, even without opening the panel."
         }
       }
     }

@@ -325,6 +325,9 @@ class MarketMonitor {
     this.config = readConfig();
     this.persistConfiguredSymbols('activation');
     this.databaseRestorePromise = this.restoreCachedDataFromDatabase('activation');
+    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.statusBarItem.command = 'marketMonitoring.refresh';
+    context.subscriptions.push(this.statusBarItem);
     this.logInfo('Activated', {
       extensionId: getExtensionId(context),
       version: getExtensionVersion(context),
@@ -335,6 +338,10 @@ class MarketMonitor {
       cachedAt: this.lastUpdatedAt || ''
     });
     this.provider.update(this.createSnapshot('未启动'));
+    this.updateStatusBar();
+    if (this.config.autoStart) {
+      setTimeout(() => this.start(false), 0);
+    }
   }
 
   start(showMessage) {
@@ -1556,6 +1563,55 @@ class MarketMonitor {
     const snapshot = this.createSnapshot(phaseName, loading);
     this.provider.update(snapshot);
     vscode.commands.executeCommand('setContext', 'marketMonitoring.hasAlerts', snapshot.alerts.length > 0);
+    this.updateStatusBar();
+  }
+
+  updateStatusBar() {
+    if (!this.statusBarItem) {
+      return;
+    }
+
+    if (!this.config.showDailyProfitInStatusBar) {
+      this.statusBarItem.hide();
+      return;
+    }
+
+    const groups = groupQuotes(this.lastQuotes, this.config.groups, this.config.symbols, this.rawTriggeredAlerts, this.config.sortBy, this.config.sortDirection, this.groupStatsQuotes);
+    const summary = calculateTotalFromGroups(groups);
+
+    if (summary.dailyProfit === null && summary.dailyProfitPercent === null) {
+      this.statusBarItem.hide();
+      return;
+    }
+
+    const compact = this.config.compactLargeAmounts;
+    const profitText = summary.dailyProfit === null
+      ? '--'
+      : formatStatusBarAmount(summary.dailyProfit, compact);
+    const percentText = summary.dailyProfitPercent === null
+      ? '--'
+      : formatStatusBarPercent(summary.dailyProfitPercent);
+
+    this.statusBarItem.text = `$(graph) ${profitText}  ${percentText}%`;
+    this.statusBarItem.tooltip = `今日盈亏: ${profitText}\n收益率: ${percentText}%\n标的数: ${summary.assetCount}`;
+
+    if (summary.dailyProfit !== null && this.config.colors) {
+      const colors = this.config.colors;
+      const isProfit = summary.dailyProfit > 0;
+      const isLoss = summary.dailyProfit < 0;
+
+      if (isProfit) {
+        this.statusBarItem.color = colors.up !== 'var(--vscode-foreground)' ? colors.up : undefined;
+      } else if (isLoss) {
+        this.statusBarItem.color = colors.down !== 'var(--vscode-foreground)' ? colors.down : undefined;
+      } else {
+        this.statusBarItem.color = undefined;
+      }
+    } else {
+      this.statusBarItem.color = undefined;
+    }
+
+    this.statusBarItem.show();
   }
 
   async notifyAlerts(alerts) {
@@ -5544,6 +5600,8 @@ function readConfig() {
     quoteColumns: sanitizeQuoteColumns(config.get('quoteColumns', DEFAULT_QUOTE_COLUMNS)),
     groupSummaryMetrics: sanitizeGroupSummaryMetrics(config.get('groupSummaryMetrics', DEFAULT_GROUP_SUMMARY_METRICS)),
     showMarketBreadth: Boolean(config.get('showMarketBreadth', true)),
+    showDailyProfitInStatusBar: Boolean(config.get('showDailyProfitInStatusBar', true)),
+    autoStart: Boolean(config.get('autoStart', true)),
     requestTimeoutMs: config.get('requestTimeoutMs', 10000),
     colors: getColorPalette(sanitizeColorMode(config.get('colorMode', 'none')))
   };
@@ -10080,7 +10138,9 @@ function calculateGroupPortfolioSummaryValue(items) {
   return {
     totalAssets: assetCount > 0 ? totalAssets : null,
     dailyProfit: profitCount > 0 ? dailyProfit : null,
-    dailyProfitPercent: profitPercentCount > 0 && previousAssets > 0 ? (dailyProfitForPercent / previousAssets) * 100 : null
+    dailyProfitForPercent: profitPercentCount > 0 ? dailyProfitForPercent : null,
+    dailyProfitPercent: profitPercentCount > 0 && previousAssets > 0 ? (dailyProfitForPercent / previousAssets) * 100 : null,
+    previousAssets: profitPercentCount > 0 ? previousAssets : null
   };
 }
 
@@ -10088,6 +10148,77 @@ function hasGroupPortfolioSummaryValue(summary) {
   return summary.totalAssets !== null
     || summary.dailyProfit !== null
     || summary.dailyProfitPercent !== null;
+}
+
+function calculateTotalFromGroups(groups) {
+  let dailyProfit = 0;
+  let dailyProfitForPercent = 0;
+  let previousAssets = 0;
+  let profitCount = 0;
+  let profitPercentCount = 0;
+  let assetCount = 0;
+
+  for (const group of groups) {
+    const summary = calculateGroupPortfolioSummaryValue(group.items);
+    if (summary.totalAssets !== null) {
+      assetCount += countHoldingItems(group.items);
+    }
+    if (summary.dailyProfit !== null) {
+      dailyProfit += summary.dailyProfit;
+      profitCount += 1;
+    }
+    if (summary.dailyProfitForPercent !== null && summary.previousAssets !== null) {
+      dailyProfitForPercent += summary.dailyProfitForPercent;
+      previousAssets += summary.previousAssets;
+      profitPercentCount += 1;
+    }
+  }
+
+  return {
+    dailyProfit: profitCount > 0 ? dailyProfit : null,
+    dailyProfitPercent: profitPercentCount > 0 && previousAssets > 0 ? (dailyProfitForPercent / previousAssets) * 100 : null,
+    assetCount
+  };
+}
+
+function countHoldingItems(items) {
+  let count = 0;
+  for (const item of items) {
+    const holding = Number(item.holding);
+    if (Number.isFinite(holding) && holding > 0) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function formatStatusBarAmount(value, compact) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return '--';
+  }
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  const absAmount = Math.abs(amount);
+  if (compact && absAmount > 10000) {
+    return sign + formatStatusBarDecimal(absAmount / 10000, 2) + 'W';
+  }
+  return sign + formatStatusBarDecimal(absAmount, 2);
+}
+
+function formatStatusBarDecimal(value, digits) {
+  const str = Number(value).toFixed(digits);
+  const parts = str.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return parts.join('.');
+}
+
+function formatStatusBarPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) {
+    return '--';
+  }
+  const sign = percent > 0 ? '+' : percent < 0 ? '' : '';
+  return sign + percent.toFixed(2).replace(/\.?0+$/, '');
 }
 
 function toCsv(rows) {
